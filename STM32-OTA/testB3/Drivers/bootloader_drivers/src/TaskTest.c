@@ -222,6 +222,23 @@ void OTA_SendACK(void)
 }
 
 
+/**
+ * @brief 发送NACK应答帧
+ * 
+ * @details 格式: | 0x66 | 0x0A | err_code | 0xBB | 
+ *          用于告知ESP32命令接收失败，包含错误码err_code
+ */
+void OTA_SendNACK(uint8_t err_code)
+{
+	uint8_t frame[OTA_NACK_FRAME_LEN];
+
+	frame[0] = OTA_PACKET_HEAD;
+	frame[1] = OTA_CMD_NACK;
+	frame[2] = err_code;
+	frame[3] = OTA_PACKET_TAIL;
+
+	HAL_UART_Transmit(&huart2,frame,OTA_NACK_FRAME_LEN,100);
+}
 
 
 /*============================================================================*/
@@ -302,6 +319,8 @@ uint8_t OTA_ParseFirmwareInfo(uint8_t *data, uint16_t len, OTA_FirmwareInfo_t *i
 		U1_Printf("[错误] 解析固件信息帧: 参数为空\r\n");
 		return 0;
 	}
+
+
 
 	if (len != OTA_INFO_FRAME_LEN)
 	{
@@ -610,6 +629,14 @@ uint8_t OTA_VerifyFirmwareCRC(void)
 	
 	addr = FLASH_ACode_STARTADDR;
 	remaining = g_ota_ctx.firmware_size;
+
+	/* ======== [测试用例3] 固件整体CRC失败注入 ======== */
+	/* 读取起始地址偏移+1，让校验读到的数据与写入的不一致，整体CRC必然失败
+	 * 用于验证: 数据传输全程正常ACK -> 0x07后CRC失败回NACK(0x05)
+	 *           -> ESP32立即失败不重试单帧 -> ABORT -> 3次上限 -> 206
+	 * 注意：用例2测完后，删掉用例2的注入，解开下面这行再测本用例
+	 * 测完删除下面这行 */
+	 //addr += 1;
 	
 	while (remaining > 0)
 	{
@@ -712,8 +739,8 @@ void OTA_Init(void)
 void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 {
 	uint8_t cmd;
-	OTA_FirmwareInfo_t fw_info;
-	OTA_DataFrame_t data_frame;
+	OTA_FirmwareInfo_t fw_info;		/*存储固件信息*/
+	OTA_DataFrame_t data_frame;		/*存储固件数据帧*/
 	HAL_StatusTypeDef status;
 	uint8_t i;
 	
@@ -764,9 +791,7 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			case OTA_CMD_UPGRADE_END:
 				if (g_ota_ctx.state == OTA_STATE_WAIT_DATA || g_ota_ctx.state == OTA_STATE_WAIT_END)
 				{
-					U1_Printf("收到升级结束命令(0x07)\r\n");
-					OTA_SendACK();
-					
+					U1_Printf("收到升级结束命令(0x07)\r\n");					
 					U1_Printf("\r\n");
 					U1_Printf("========================================\r\n");
 					U1_Printf("       固件接收完成!\r\n");
@@ -779,8 +804,11 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 					 * 与信息帧下发的固件整体CRC32比对。
 					 * 逐帧CRC只保护传输链路，整体CRC保护落盘正确性（Flash写入/地址累加/末包截断等环节）。
 					 */
+					        /* 先做CRC校验，通过才发ACK，失败发NACK——不能先ACK后校验，
+        				 * 否则ESP32收到ACK就认为成功退出了，NACK发得太晚没人听 */
 					if (OTA_VerifyFirmwareCRC())
 					{
+						OTA_SendACK();       /* CRC通过才发ACK，ESP32收到后确认成功 */
 						U1_Printf("========================================\r\n");
 						U1_Printf("升级成功，即将跳转到A区APP...\r\n");
 						U1_Printf("========================================\r\n");
@@ -793,6 +821,7 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 						 * 这是W25Q128 A/B分区回滚机制上线前的安全策略。
 						 */
 						s_app_firmware_invalid = 1;
+						OTA_SendNACK(OTA_NACK_FW_CRC_FAIL);	/* 通知ESP32,当前STM32固件校验失败，不要认为传输成功 */
 						g_ota_ctx.state = OTA_STATE_UPGRADE_FAILED;
 						U1_Printf("========================================\r\n");
 						U1_Printf("[严重] 固件整体CRC校验失败！A区固件不可用。\r\n");
@@ -802,8 +831,26 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 				}
 				break;
 					
+				case OTA_CMD_ABORT:
+					/* ABORT不检查状态：任何状态收到都立即执行
+					* 危险性判断：只要已经到WAIT_INFO(含)之后，说明A区已被擦除/写入过，
+					* 原APP已不存在，此时若回IDLE后超时跳转会跑飞！必须置损坏标志阻止跳转 */
+					if (g_ota_ctx.state >= OTA_STATE_WAIT_INFO)
+					{
+						s_app_firmware_invalid = 1;					
+						U1_Printf("[安全] 传输中途放弃，A区已不完整，禁止跳转\r\n");
+					}
+					U1_Printf("收到ABORT(0x08)，重置回IDLE\r\n");
+					OTA_Init();
+					OTA_SendACK();
+					/*注意目前还在测试，目前依然停留在bootloader程序，等回滚程序实现后才完整*/
+					break;
+
+
+
 				default:
 					U1_Printf("未知命令: 0x%02X\r\n", cmd);
+					OTA_SendNACK(OTA_NACK_UNKNOWN_CMD);
 					break;
 			}
 		}
@@ -847,14 +894,16 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			else
 			{
 				U1_Printf("[错误] 固件信息帧解析失败!\r\n");
+				OTA_SendNACK(OTA_NACK_FRAME_CRC);	/*通知ESP32,当前STM32解析数据出错*/
 			}
 		}
 		else
 		{
 			U1_Printf("[警告] 当前状态不是WAIT_INFO, 忽略固件信息帧\r\n");
+			OTA_SendNACK(OTA_NACK_STATE_MISMATCH);
 		}
 	}
-	else if (len >= OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_FRAME_TAIL_LEN)
+	else if (len >= OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_FRAME_TAIL_LEN)/* 数据帧长度检查 */
 	{
 		if (g_ota_ctx.state == OTA_STATE_WAIT_DATA)
 		{
@@ -900,22 +949,40 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 					else
 					{
 						U1_Printf("[错误] Flash写入失败! 包序号: %d\r\n", data_frame.packet_num);
+						OTA_SendNACK(OTA_NACK_FLASH_ERROR);
 					}
 				}
 				else
 				{
-					U1_Printf("[警告] 包序号不匹配: 期望%d, 收到%d\r\n", 
-						g_ota_ctx.expected_packet, data_frame.packet_num);
+						//U1_Printf("[警告] 包序号不匹配: 期望%d, 收到%d\r\n", 
+						//g_ota_ctx.expected_packet, data_frame.packet_num);
+						if (data_frame.packet_num + 1 == g_ota_ctx.expected_packet)
+						{
+								/*进入这个条件说明重复包：上一包数据已正确写入，只是ACK丢了，补ACK让ESP32继续*/
+								U1_Printf("[调试]重复包%d(对应的ACK丢失)，补发ACK\r\n", data_frame.packet_num);
+								OTA_SendACK();
+						}
+						else
+						{
+								U1_Printf("[警告] 包序号不匹配: 期望%d, 收到%d\r\n", 
+								g_ota_ctx.expected_packet, data_frame.packet_num);
+								OTA_SendNACK(OTA_NACK_PACKET_SEQ);
+						}
+
 				}
 			}
 			else
 			{
 				U1_Printf("[错误] 数据帧解析失败!\r\n");
+				OTA_SendNACK(OTA_NACK_FRAME_CRC);
+
 			}
 		}
 		else
 		{
 			U1_Printf("[警告] 当前状态不是WAIT_DATA, 忽略数据帧 (长度%d)\r\n", len);
+			OTA_SendNACK(OTA_NACK_STATE_MISMATCH);
+
 		}
 	}
 	else
@@ -927,6 +994,8 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			U1_Printf("%02X ", data[i]);
 		}
 		U1_Printf("\r\n");
+		OTA_SendNACK(OTA_NACK_BAD_LENGTH);
+
 	}
 }
 
@@ -974,6 +1043,12 @@ uint8_t OTA_WaitForHandshake(uint32_t timeout_ms)
 					U1_Printf("收到二次握手确认!\r\n");
 					return 1;
 				}
+				else if (cmd == OTA_CMD_ABORT)
+				{
+					/* IDLE本来就是初始状态，回ACK让ESP32放心 */
+					OTA_SendACK();
+				}
+				
 			}
 		}
 		
@@ -1054,7 +1129,7 @@ void OTA_RunUpgradeProcess(void)
 				break;
 				
 			case OTA_STATE_UPGRADE_SUCCESS:
-				U1_Printf("升级成功，即将跳转到A区APP...\r\n");
+				
 				HAL_Delay(500);
 				Load_A(FLASH_ACode_STARTADDR);
 				return;

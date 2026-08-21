@@ -1,4 +1,5 @@
 #include "onenet_ota.h"
+#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -528,6 +529,8 @@ static void onenet_ota_task(void *param)
 {
 
     esp_err_t ret;
+    int ota_total_retry = 0;              /* 整体重试计数 */
+    bool stm32_in_bootloader = false;     /* 第一次走完整流程，重试时STM32已在Bootloader */
     //need_send_firmware = true;//需要发送固件（测试用）
     //上报当前版本号
 
@@ -586,25 +589,69 @@ static void onenet_ota_task(void *param)
 
     for(;;)
     {
-        if(need_send_firmware)
-        {
-            set_firmware_info(firmware_size, target_version, firmware_crc32);
-            //set_firmware_info(firmware_size, "v1.0.4", 0);//测试用
-            esp_err_t ret = serial_send_firmware(UART_NUM_1, FIRMWARE_FILE_PATH);
-            if (ret == ESP_OK)
+      //  if(need_send_firmware)
+      //  {
+      //      set_firmware_info(firmware_size, target_version, firmware_crc32);
+      //      //set_firmware_info(firmware_size, "v1.0.4", 0);//测试用
+      //      esp_err_t ret = serial_send_firmware(UART_NUM_1, FIRMWARE_FILE_PATH);
+      //      if (ret == ESP_OK)
+      //      {
+      //          /* 固件传输成功，清除标志 */
+      //          need_send_firmware = false;
+      //          ESP_LOGI(TAG, "Firmware transmission success, task completed");
+      //          goto delete_ota_task;
+      //      }
+      //      else
+      //      {
+      //          /* 固件传输失败，保持标志为true，下次循环重新尝试握手 */
+      //          ESP_LOGW(TAG, "Firmware transmission failed, will retry...");
+      //      }
+      //  }
+      //  vTaskDelay(pdMS_TO_TICKS(500));
+
+            if (need_send_firmware)
             {
-                /* 固件传输成功，清除标志 */
-                need_send_firmware = false;
-                ESP_LOGI(TAG, "Firmware transmission success, task completed");
-                goto delete_ota_task;
+                /* 先判断重试上限 */
+                if (ota_total_retry >= 3)
+                {
+                    /*如果超出重试次数上限，就上报更新失败*/
+                    ESP_LOGE(TAG, "OTA transmission failed after %d retries, abort", ota_total_retry);
+                    onenet_ota_upload_status(task_id, 206);  
+                    goto delete_ota_task;
+                }
+                ota_total_retry++;
+
+                set_firmware_info(firmware_size, target_version, firmware_crc32);
+                esp_err_t ret = serial_send_firmware(UART_NUM_1, FIRMWARE_FILE_PATH, stm32_in_bootloader);
+                if (ret == ESP_OK)
+                {
+                    /*这里是如果固件传输成功，就清除标志*/
+                    need_send_firmware = false;
+                    ESP_LOGI(TAG, "Firmware transmission success, task completed");
+                    onenet_ota_upload_status(task_id, 201);   /* 升级成功，OneNET 任务闭环 */
+                    goto delete_ota_task;
+                }
+                else
+                {
+                    /* 仅 0x04(Flash错误)/0x05(整体CRC失败) 不可恢复：重试也救不回来 */
+                    if (g_last_nack_err == NACK_ERR_FLASH_ERROR ||
+                        g_last_nack_err == NACK_ERR_FW_CRC_FAIL)
+                    {
+                        ESP_LOGE(TAG, "Unrecoverable NACK=0x%02X, abort immediately", g_last_nack_err);
+                        onenet_ota_upload_status(task_id, 206);
+                        goto delete_ota_task;
+                    }
+                    /* 其余(0x01/0x02/0x03/0x06/0x07)或纯超时均可恢复：ABORT对齐后重试 */
+                    stm32_in_bootloader = true;
+                    ESP_LOGW(TAG, "Firmware transmission failed (retry %d/3, last NACK=0x%02X), will retry...",
+                        ota_total_retry, g_last_nack_err);
+                }
+
             }
-            else
-            {
-                /* 固件传输失败，保持标志为true，下次循环重新尝试握手 */
-                ESP_LOGW(TAG, "Firmware transmission failed, will retry...");
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(500));
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+
+
     }
 
 delete_ota_task:/*等到所有固件传输完成，再删除任务，避免重复发送*/
