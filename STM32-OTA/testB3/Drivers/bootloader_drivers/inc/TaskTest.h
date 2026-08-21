@@ -99,14 +99,33 @@
  *   5. 0x05: 固件信息 - 包含固件大小、版本号、CRC32校验值
  *   6. 0x06: 固件数据 - 实际的固件数据包(每包最多1024字节)
  *   7. 0x07: 升级结束 - ESP32通知所有数据发送完毕
+ *   8. 0x08: ESP32→STM32: 放弃本次传输，STM32重置回IDLE
+ *   9. 0x0A: STM32→ESP32: 否定应答，携带1字节错误码
  */
-#define OTA_CMD_UPGRADE_NOTIFY          0x01        
-#define OTA_CMD_ACK                     0x02        
-#define OTA_CMD_CONFIRM                 0x03        
-#define OTA_CMD_START_TRANSFER          0x04        
-#define OTA_CMD_FIRMWARE_INFO           0x05        
-#define OTA_CMD_FIRMWARE_DATA           0x06        
-#define OTA_CMD_UPGRADE_END             0x07        
+#define OTA_CMD_UPGRADE_NOTIFY          0x01    /* ESP32→STM32: 升级通知，A区处理 */
+#define OTA_CMD_ACK                     0x02    /* STM32→ESP32: 确认应答 */    
+#define OTA_CMD_CONFIRM                 0x03    /* ESP32→STM32: 确认升级，STM32重启后等待此命令 */    
+#define OTA_CMD_START_TRANSFER          0x04    /* ESP32→STM32: 开始传输，STM32擦除Flash */    
+#define OTA_CMD_FIRMWARE_INFO           0x05    /* ESP32→STM32: 固件信息，包含固件大小、版本号、CRC32校验值 */    
+#define OTA_CMD_FIRMWARE_DATA           0x06    /* ESP32→STM32: 固件数据，实际的固件数据包(每包最多1024字节) */    
+#define OTA_CMD_UPGRADE_END             0x07    /* ESP32→STM32: 升级结束，STM32通知所有数据发送完毕 */    
+#define OTA_CMD_ABORT                   0x08    /* ESP32→STM32: 放弃本次传输，STM32重置回IDLE */
+#define OTA_CMD_NACK                    0x0A    /* STM32→ESP32: 否定应答，携带1字节错误码 */
+
+
+/*NACK错误码定义*/
+#define  OTA_NACK_FRAME_CRC             0x01        /* 帧CRC校验失败(传输干扰，可重发恢复) */
+#define  OTA_NACK_STATE_MISMATCH        0x02         /* 状态不匹配(时序错位，需ABORT对齐) */
+#define  OTA_NACK_BAD_LENGTH            0x03          /* 帧长非法 */
+#define OTA_NACK_FLASH_ERROR            0x04        /* Flash擦除/写入失败(硬件问题) */
+#define OTA_NACK_FW_CRC_FAIL            0x05        /* 固件整体CRC校验失败 */
+#define OTA_NACK_UNKNOWN_CMD            0x06        /* 未知命令 */
+#define OTA_NACK_PACKET_SEQ             0x07        /* 包序号异常(乱序) */
+
+
+/* NACK帧格式: | 0x66 | 0x0A | err_code | 0xBB | 共4字节 */
+#define OTA_NACK_FRAME_LEN             4
+
 
 /**
  * @brief 协议帧长度定义
@@ -114,8 +133,10 @@
  * 简单命令帧格式 (3字节):
  *   | 包头(0x66) | 命令字 | 包尾(0xBB) |
  * 
- * 固件信息帧格式 (21字节):
- *   | 0x66 | 0x05 | 固件大小(4B,大端序) | 分隔符(0x2F 0x2F) | 版本号(8B,ASCII) | CRC32(4B,大端序) | 0xBB |
+ * 固件信息帧格式 (25字节):
+ *   | 0x66 | 0x05 | 固件大小(4B,大端序) | 分隔符(0x2F 0x2F) | 版本号(8B,ASCII) | 固件CRC32(4B,大端序) | 帧CRC32(4B,大端序) | 0xBB |
+ *   说明：固件CRC32 = 整个固件文件的CRC32（端到端校验）；
+ *         帧CRC32  = 对"命令+大小+分隔符+版本号+固件CRC32"共19字节计算的CRC（帧完整性）。
  * 
  * 数据帧格式 (变长，最大1037字节):
  *   | 0x66 | 0x06 | 包序号(2B,大端序) | 数据长度(4B,大端序) | 数据(≤1024B) | CRC32(4B,大端序) | 0xBB |
@@ -125,9 +146,9 @@
  * @note 版本号为ASCII字符串，如 "v1.0.2"，不足8字节用0x00填充
  */
 #define OTA_SIMPLE_FRAME_LEN            3                   
-#define OTA_INFO_FRAME_LEN              21                  
-#define OTA_DATA_FRAME_HEADER_LEN       12                  
-#define OTA_DATA_FRAME_TAIL_LEN         1                   
+#define OTA_INFO_FRAME_LEN              25                  
+#define OTA_DATA_FRAME_HEADER_LEN       8       // 数据帧真头部：包头1+命令1+序号2+长度4=8字节（CRC与包尾另算）
+#define OTA_DATA_FRAME_TAIL_LEN         5       // 数据帧尾部：CRC32(4)+包尾(1)=5字节
 #define OTA_DATA_PAYLOAD_LEN            1024                
 #define OTA_DATA_FRAME_MAX_LEN          (OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_PAYLOAD_LEN + OTA_DATA_FRAME_TAIL_LEN)
 
@@ -136,9 +157,9 @@
 /**
  * @brief 超时和重试配置
  */
-#define OTA_HANDSHAKE_TIMEOUT_MS        5000        
-#define OTA_FRAME_TIMEOUT_MS            3000        
-#define OTA_MAX_RETRY_COUNT             3           
+#define OTA_HANDSHAKE_TIMEOUT_MS        5000        // 二次握手超时时间
+#define OTA_FRAME_TIMEOUT_MS            3000        // 数据帧超时时间
+#define OTA_MAX_RETRY_COUNT             3           // 最大重试次数
 
 
 /*============================================================================*/
@@ -294,6 +315,11 @@ void OTA_SendSimpleFrame(uint8_t cmd);
  * @brief 发送ACK应答帧
  */
 void OTA_SendACK(void);
+
+/**
+ * @brief 发送NACK应答帧
+ */
+void OTA_SendNACK(uint8_t err_code);
 
 
 /*============================ 协议帧解析函数 ============================*/
