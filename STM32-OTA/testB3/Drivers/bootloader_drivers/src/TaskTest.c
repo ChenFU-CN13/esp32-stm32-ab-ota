@@ -25,6 +25,12 @@ OTA_Context_t g_ota_ctx;
  */
 static uint8_t ota_rx_buffer[OTA_DATA_FRAME_MAX_LEN + 4];	
 
+/* A区固件完整性标志：整体CRC校验失败后置1，阻止Bootloader超时跳转到损坏的APP
+ * 置1后Bootloader会一直停留在IDLE状态等待新的升级请求（或SWD恢复），避免变砖
+ * 待W25Q128 A/B分区回滚机制实现后，此标志可演进为"回滚到上一可用版本"
+ */
+static uint8_t s_app_firmware_invalid = 0;
+
 
 /*============================================================================*/
 /*                          底层硬件操作函数                                   */
@@ -267,36 +273,41 @@ uint8_t OTA_ParseSimpleFrame(uint8_t *data, uint16_t len, uint8_t *cmd)
  * @param info 输出固件信息结构体
  * @return 1-解析成功，0-解析失败
  * 
- * @details 帧格式(21字节):
- *   | 字节偏移 | 内容          | 说明                    |
- *   |----------|---------------|------------------------|
- *   | 0        | 0x66          | 包头                   |
- *   | 1        | 0x05          | 命令字(固件信息)        |
- *   | 2-5      | firmware_size | 固件大小(大端序)        |
- *   | 6-7      | 0x2F 0x2F     | 分隔符                  |
- *   | 8-15     | version       | 版本号(8字节ASCII)      |
- *   | 16-19    | firmware_crc32| CRC32校验值(大端序)     |
- *   | 20       | 0xBB          | 包尾                   |
+ * @details 帧格式(25字节):
+ *   | 字节偏移 | 内容          | 说明                            |
+ *   |----------|---------------|--------------------------------|
+ *   | 0        | 0x66          | 包头                            |
+ *   | 1        | 0x05          | 命令字(固件信息)                |
+ *   | 2-5      | firmware_size | 固件大小(大端序)                |
+ *   | 6-7      | 0x2F 0x2F     | 分隔符                          |
+ *   | 8-15     | version       | 版本号(8字节ASCII)              |
+ *   | 16-19    | firmware_crc32| 固件整体CRC32(大端序,端到端校验)|
+ *   | 20-23    | frame_crc32   | 帧CRC32(大端序,帧完整性校验)    |
+ *   | 24       | 0xBB          | 包尾                            |
  * 
  * @note 大端序解析: 高字节在前，低字节在后
  *       例如: 固件大小0x00012345，存储为：00 01 23 45
  *       版本号为ASCII字符串，如"v1.0.2"，不足8字节用0x00填充
+ *       firmware_crc32 = 整个固件文件的CRC32，收完数据后用它做端到端校验；
+ *       frame_crc32 = 对 data[1]~data[19]（命令+大小+分隔符+版本号+固件CRC32，共19字节）计算的CRC。
  */
 uint8_t OTA_ParseFirmwareInfo(uint8_t *data, uint16_t len, OTA_FirmwareInfo_t *info)
 {
 	uint8_t i;
-	
+	uint32_t recv_frame_crc;
+	uint32_t calc_frame_crc;
+
 	if (data == NULL || info == NULL)
 	{
 		U1_Printf("[错误] 解析固件信息帧: 参数为空\r\n");
 		return 0;
 	}
-	
+
 	if (len != OTA_INFO_FRAME_LEN)
 	{
 		U1_Printf("[错误] 解析固件信息帧: 长度错误, 期望%d, 实际%d\r\n", OTA_INFO_FRAME_LEN, len);
 		U1_Printf("  接收数据: ");
-		for (i = 0; i < len && i < 25; i++)
+		for (i = 0; i < len && i < 32; i++)
 		{
 			U1_Printf("%02X ", data[i]);
 		}
@@ -334,19 +345,46 @@ uint8_t OTA_ParseFirmwareInfo(uint8_t *data, uint16_t len, OTA_FirmwareInfo_t *i
 		return 0;
 	}
 	
+	/* 固件大小：data[2-5]，大端序 */
 	info->firmware_size = ((uint32_t)data[2] << 24) | 
 	                      ((uint32_t)data[3] << 16) | 
 	                      ((uint32_t)data[4] << 8) | 
 	                      (uint32_t)data[5];
 	
+	/* 版本号：data[8-15]，8字节ASCII */
 	memcpy(info->version, &data[8], OTA_VERSION_LEN);
 	
+	/* 固件整体CRC32：data[16-19]，大端序，收完数据后用它做端到端校验 */
 	info->firmware_crc32 = ((uint32_t)data[16] << 24) | 
 	                       ((uint32_t)data[17] << 16) | 
 	                       ((uint32_t)data[18] << 8) | 
 	                       (uint32_t)data[19];
 	
-	U1_Printf("[成功] 固件信息帧解析成功\r\n");
+	/* 帧CRC32：data[20-23]，大端序 */
+	recv_frame_crc = ((uint32_t)data[20] << 24) | 
+	                 ((uint32_t)data[21] << 16) | 
+	                 ((uint32_t)data[22] << 8) | 
+	                 (uint32_t)data[23];
+	
+	/* 帧CRC自校验：对 data[1]~data[19] 共19字节计算CRC，与收到的帧CRC比对
+	 * 校验范围 = 命令字 + 固件大小 + 分隔符 + 版本号 + 固件整体CRC32
+	 * 不含包头(0x66)、帧CRC自身、包尾(0xBB)
+	 */
+	calc_frame_crc = OTA_CalcCRC32(&data[1], 19);
+	if (calc_frame_crc != recv_frame_crc)
+	{
+		U1_Printf("[错误] 固件信息帧CRC校验失败: 计算值=0x%08X, 接收值=0x%08X\r\n", 
+			(unsigned int)calc_frame_crc, (unsigned int)recv_frame_crc);
+		U1_Printf("  完整帧数据: ");
+		for (i = 0; i < OTA_INFO_FRAME_LEN; i++)
+		{
+			U1_Printf("%02X ", data[i]);
+		}
+		U1_Printf("\r\n");
+		return 0;
+	}
+	
+	U1_Printf("[成功] 固件信息帧解析成功(含帧CRC校验)\r\n");
 	return 1;
 }
 
@@ -528,10 +566,12 @@ HAL_StatusTypeDef OTA_WriteFirmwareData(uint32_t addr, uint8_t *data, uint32_t l
 	
 	memcpy(padded_data, data, len);
 	
-	aligned_len = (len + 3) & ~0x03;
+	aligned_len = (len + 3) & ~0x03;	//4字节对齐后的长度
+										//原理：比如说实际的len=1023，那么+3就变成1026，再进行& ~0x03（由1026的二进制表示为11111100），就是1024
+										//这样就是4字节对齐后的长度，确保写入时地址是4的倍数
 	
-	if (aligned_len > len)
-	{
+	if (aligned_len > len)				//如果对齐后的长度大于实际长度，用0xFF填充末尾
+	{									//0xFF是Flash擦除后的默认值，填充0xFF不影响程序
 		memset(&padded_data[len], 0xFF, aligned_len - len);
 	}
 	
@@ -663,7 +703,7 @@ void OTA_Init(void)
  * 
  * @details 根据帧长度判断帧类型:
  *   - 3字节: 简单命令帧(握手、开始传输、结束等)
- *   - 17字节: 固件信息帧
+ *   - 25字节(OTA_INFO_FRAME_LEN): 固件信息帧
  *   - 其他: 固件数据帧
  * 
  * @note 状态机处理:
@@ -721,26 +761,46 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 					}
 					break;
 					
-				case OTA_CMD_UPGRADE_END:
-					if (g_ota_ctx.state == OTA_STATE_WAIT_DATA || g_ota_ctx.state == OTA_STATE_WAIT_END)
+			case OTA_CMD_UPGRADE_END:
+				if (g_ota_ctx.state == OTA_STATE_WAIT_DATA || g_ota_ctx.state == OTA_STATE_WAIT_END)
+				{
+					U1_Printf("收到升级结束命令(0x07)\r\n");
+					OTA_SendACK();
+					
+					U1_Printf("\r\n");
+					U1_Printf("========================================\r\n");
+					U1_Printf("       固件接收完成!\r\n");
+					U1_Printf("========================================\r\n");
+					U1_Printf("固件大小: %lu 字节\r\n", g_ota_ctx.received_size);
+					U1_Printf("版本号: %s\r\n", g_ota_ctx.version);
+					U1_Printf("========================================\r\n");
+					
+					/* 整体CRC端到端校验：从A区Flash读取整份固件流式计算CRC32，
+					 * 与信息帧下发的固件整体CRC32比对。
+					 * 逐帧CRC只保护传输链路，整体CRC保护落盘正确性（Flash写入/地址累加/末包截断等环节）。
+					 */
+					if (OTA_VerifyFirmwareCRC())
 					{
-						U1_Printf("收到升级结束命令(0x07)\r\n");
-						OTA_SendACK();
-						
-						U1_Printf("\r\n");
 						U1_Printf("========================================\r\n");
-						U1_Printf("       固件接收完成!\r\n");
+						U1_Printf("升级成功，即将跳转到A区APP...\r\n");
 						U1_Printf("========================================\r\n");
-						U1_Printf("固件大小: %lu 字节\r\n", g_ota_ctx.received_size);
-						U1_Printf("版本号: %s\r\n", g_ota_ctx.version);
-						U1_Printf("\r\n");
-						U1_Printf("[提示] 固件整体CRC校验已跳过\r\n");
-						U1_Printf("[提示] 如需校验，请在ESP32端计算固件CRC并发送\r\n");
-						U1_Printf("========================================\r\n");
-						
 						g_ota_ctx.state = OTA_STATE_UPGRADE_SUCCESS;
 					}
-					break;
+					else
+					{
+						/* 整体CRC校验失败：A区固件已损坏，绝不可跳转，否则会跑飞/变砖。
+						 * 置损坏标志，停在Bootloader等待重新升级（或SWD恢复）。
+						 * 这是W25Q128 A/B分区回滚机制上线前的安全策略。
+						 */
+						s_app_firmware_invalid = 1;
+						g_ota_ctx.state = OTA_STATE_UPGRADE_FAILED;
+						U1_Printf("========================================\r\n");
+						U1_Printf("[严重] 固件整体CRC校验失败！A区固件不可用。\r\n");
+						U1_Printf("[安全] 停在Bootloader不跳转，等待重新升级/SWD恢复...\r\n");
+						U1_Printf("========================================\r\n");
+					}
+				}
+				break;
 					
 				default:
 					U1_Printf("未知命令: 0x%02X\r\n", cmd);
@@ -750,9 +810,9 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 	}
 	else if (len == OTA_INFO_FRAME_LEN)
 	{
-		U1_Printf("[调试] 识别为固件信息帧(17字节)\r\n");
+		U1_Printf("[调试] 识别为固件信息帧(%d字节)\r\n", OTA_INFO_FRAME_LEN);
 		U1_Printf("  帧数据: ");
-		for (i = 0; i < len && i < 20; i++)
+		for (i = 0; i < len && i < 32; i++)
 		{
 			U1_Printf("%02X ", data[i]);
 		}
@@ -936,7 +996,8 @@ uint8_t OTA_WaitForHandshake(uint32_t timeout_ms)
  *   3. WAIT_INFO状态: 等待固件信息帧
  *   4. WAIT_DATA状态: 循环接收数据帧
  *   5. WAIT_END状态: 等待升级结束命令
- *   6. UPGRADE_SUCCESS/FAILED: 跳转APP
+ *   6. UPGRADE_SUCCESS: 整体CRC校验通过，跳转APP
+ *      UPGRADE_FAILED: 整体CRC校验失败，停在Bootloader回到IDLE等待重试（A区已损坏不可跳转）
  *   7. JUMP_TO_APP: 直接跳转APP
  * 
  * @note 这是阻塞函数，在Task_While()中调用
@@ -959,7 +1020,20 @@ void OTA_RunUpgradeProcess(void)
 				}
 				else
 				{
-					g_ota_ctx.state = OTA_STATE_JUMP_TO_APP;
+					/* 超时未收到升级请求 */
+					if (s_app_firmware_invalid)
+					{
+						/* A区固件已损坏（整体CRC校验失败过），绝不可跳转，
+						 * 留在IDLE持续监听新的升级请求，避免变砖。
+						 * 待W25Q128 A/B回滚机制上线后，此处可改为回滚到上一可用版本。 */
+						U1_Printf("[安全] A区固件损坏，停在Bootloader等待恢复...\r\n");
+						HAL_Delay(2000);
+						/* 保持IDLE状态，主循环再次等待握手 */
+					}
+					else
+					{
+						g_ota_ctx.state = OTA_STATE_JUMP_TO_APP;
+					}
 				}
 				break;
 				
@@ -986,10 +1060,14 @@ void OTA_RunUpgradeProcess(void)
 				return;
 				
 			case OTA_STATE_UPGRADE_FAILED:
-				U1_Printf("升级失败，即将跳转到A区APP...\r\n");
+				/* 升级失败（整体CRC校验失败等）：A区固件不可用，绝不跳转，否则跑飞变砖。
+				 * 重新初始化上下文回到IDLE，持续监听新的升级请求（或SWD恢复）。
+				 * 注：此分支不 return，让主循环继续转，回到IDLE等待。
+				 */
+				U1_Printf("[安全] 重新进入升级监听模式，等待新的固件...\r\n");
+				OTA_Init();   /* 重置上下文 state→IDLE，准备接收下一次升级 */
 				HAL_Delay(500);
-				Load_A(FLASH_ACode_STARTADDR);
-				return;
+				break;
 				
 			case OTA_STATE_JUMP_TO_APP:
 				U1_Printf("无升级请求，跳转到A区APP...\r\n");

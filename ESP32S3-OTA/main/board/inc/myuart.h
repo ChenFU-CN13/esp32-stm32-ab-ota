@@ -18,8 +18,10 @@
  * 协议帧格式说明：
  * 
  * 1. 固件信息帧（命令0x05）：
- *    | 包头(1) | 命令(1) | 固件大小(4) | 分隔符(2) | 版本号(8) | CRC32(4) | 包尾(1) |
- *    总长度：21字节
+ *    | 包头(1) | 命令(1) | 固件大小(4) | 分隔符(2) | 版本号(8) | 固件CRC32(4) | 帧CRC32(4) | 包尾(1) |
+ *    总长度：25字节
+ *    说明：固件CRC32 = 对整个固件文件计算的CRC32（端到端校验，保护落盘正确性）；
+ *          帧CRC32  = 对"命令+大小+分隔符+版本号+固件CRC32"共19字节计算的CRC32（帧完整性）。
  * 
  * 2. 固件数据帧（命令0x06）：
  *    | 包头(1) | 命令(1) | 包序号(2) | 数据长度(4) | 数据(1024) | CRC32(4) | 包尾(1) |
@@ -65,7 +67,7 @@
 #define SERIAL_HANDSHAKE_TIMEOUT_MS 10000   /* 握手等待超时时间，10秒（给STM32准备时间） */
 
 /*---------------------------- 数据包大小计算 ----------------------------*/
-#define SERIAL_FW_INFO_PACKET_SIZE  21      /* 固件信息帧总长度：1+1+4+2+8+4+1=21字节 */
+#define SERIAL_FW_INFO_PACKET_SIZE  25      /* 固件信息帧总长度：1+1+4+2+8+4+4+1=25字节 */
 #define SERIAL_FW_DATA_HEADER_SIZE  8       /* 数据帧头部长度：包头+命令+序号+长度 = 1+1+2+4=8字节 */
 #define SERIAL_FW_DATA_TAIL_SIZE    5       /* 数据帧尾部长度：CRC32+包尾 = 4+1=5字节 */
 #define SERIAL_FW_DATA_PACKET_SIZE  (SERIAL_FW_DATA_HEADER_SIZE + SERIAL_DATA_CHUNK_SIZE + SERIAL_FW_DATA_TAIL_SIZE)
@@ -109,13 +111,22 @@ void UART_config_init_AND_UART_recive_TASK(uart_param_config_t *uart_param,
                                         uart_port_t uart_num);
 
 /**
- * @brief 计算CRC32校验值
+ * @brief 计算CRC32校验值（一次性，对整块数据）
  * @param data 待计算的数据指针
  * @param len 数据长度
  * @return CRC32校验值
- * @note 使用ESP32硬件加速的CRC32计算，小端序
+ * @note 标准CRC-32：多项式0xEDB88320，初值0xFFFFFFFF，最终异或0xFFFFFFFF，与STM32端OTA_CalcCRC32兼容
  */
 uint32_t calculate_crc32(const uint8_t *data, size_t len);
+
+/**
+ * @brief 流式CRC32：用于对分块下载/读取的数据累加计算整体CRC32
+ *        三步用法：crc = crc32_stream_init(); crc = crc32_stream_update(crc, chunk, n); ... crc = crc32_stream_final(crc);
+ *        结果与 calculate_crc32() 对同一份数据完全一致。
+ */
+uint32_t crc32_stream_init(void);                                              /* 返回初值 0xFFFFFFFF */
+uint32_t crc32_stream_update(uint32_t crc, const uint8_t *data, size_t len);   /* 累加一段数据，不做最终异或 */
+uint32_t crc32_stream_final(uint32_t crc);                                     /* 做最终异或，返回最终CRC32 */
 
 /**
  * @brief 带重试机制的数据包发送函数
@@ -132,8 +143,9 @@ esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size
  * @brief 设置固件信息（在传输前调用）
  * @param firmware_size 固件大小（字节）
  * @param version 固件版本号字符串
+ * @param fw_crc 整个固件文件的CRC32校验值（端到端校验用）
  */
-void set_firmware_info(int firmware_size, const char* version);
+void set_firmware_info(int firmware_size, const char* version, uint32_t fw_crc);
 
 /**
  * @brief 通过串口发送固件到STM32

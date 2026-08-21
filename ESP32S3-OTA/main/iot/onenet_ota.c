@@ -47,6 +47,8 @@ static char target_version[16] = {0};
 static int  firmware_size = 0; 
 //固件MD5值
 static char firmware_md5[64] = {0};
+//固件整体CRC32值（ESP32本地流式计算，下发给STM32做端到端校验）
+static uint32_t firmware_crc32 = 0;
 //ota任务是否在运行
 static bool ota_is_running = false;
 
@@ -57,6 +59,7 @@ static bool need_send_firmware = false;
 static int download_file_fd = -1;
 static size_t download_total_size = 0;
 static mbedtls_md5_context md5_ctx;
+static uint32_t g_dl_crc_running;   // 下载过程中流式累加的CRC32中间值（未做最终异或）
 
 
 static esp_err_t http_client_event_handler(esp_http_client_event_t *evt)
@@ -90,6 +93,8 @@ static esp_err_t http_client_event_handler(esp_http_client_event_t *evt)
                         download_total_size += evt->data_len;
                         // 更新MD5值
                         mbedtls_md5_update(&md5_ctx, (const unsigned char *)evt->data, evt->data_len);
+                        // 流式累加固件整体CRC32（与MD5同一段数据，零额外IO）
+                        g_dl_crc_running = crc32_stream_update(g_dl_crc_running, (const uint8_t *)evt->data, evt->data_len);
                         ESP_LOGI(TAG, "Downloaded %zu bytes", download_total_size);
                     }
                 } else {
@@ -382,6 +387,8 @@ esp_err_t onenet_ota_download_stm32_firmware(int tid)
     // 初始化MD5上下文
     mbedtls_md5_init(&md5_ctx);
     mbedtls_md5_starts(&md5_ctx);
+    // 初始化固件整体CRC32流式累加器
+    g_dl_crc_running = crc32_stream_init();
     
     // 构建下载 URL
     snprintf(url, sizeof(url), ONENET_OTA_URL"/%s/%s/%d/download", 
@@ -467,6 +474,10 @@ esp_err_t onenet_ota_download_stm32_firmware(int tid)
     mbedtls_md5_finish(&md5_ctx, md5_result);
     mbedtls_md5_free(&md5_ctx);
     
+    // 计算最终的固件整体CRC32（做最终异或）
+    firmware_crc32 = crc32_stream_final(g_dl_crc_running);
+    ESP_LOGI(TAG, "Downloaded file CRC32: 0x%08X", (unsigned int)firmware_crc32);
+    
     // 将MD5值转换为字符串
     char md5_str[33];
     for (int i = 0; i < 16; i++) {
@@ -522,7 +533,7 @@ static void onenet_ota_task(void *param)
 
     /*注意:上报当前版本号时，需要根据实际情况修改，不能直接使用"1.0.2"，而应该根据实际情况修改
     后续STM32跳转到A区固件时，系统开始会发送当前版本号，用于判断是否需要升级。*/
-   ret = onenet_ota_upload_version("1.0.2");
+   ret = onenet_ota_upload_version("1.0.7");
    if(ret != ESP_OK)
    {
        ESP_LOGE(TAG,"Upload version faild!");
@@ -530,7 +541,7 @@ static void onenet_ota_task(void *param)
    }
 
    //检测升级任务
-   ret = onenet_ota_check_task("2","1.0.2");
+   ret = onenet_ota_check_task("2","1.0.7");
 
    if(ret != ESP_OK)
    {
@@ -577,8 +588,8 @@ static void onenet_ota_task(void *param)
     {
         if(need_send_firmware)
         {
-            set_firmware_info(firmware_size, target_version);
-            //set_firmware_info(firmware_size, "v1.0.4");//测试用
+            set_firmware_info(firmware_size, target_version, firmware_crc32);
+            //set_firmware_info(firmware_size, "v1.0.4", 0);//测试用
             esp_err_t ret = serial_send_firmware(UART_NUM_1, FIRMWARE_FILE_PATH);
             if (ret == ESP_OK)
             {

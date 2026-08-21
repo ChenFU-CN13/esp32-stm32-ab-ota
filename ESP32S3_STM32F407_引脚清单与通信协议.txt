@@ -1,0 +1,340 @@
+ESP32-S3 + STM32F407 OTA 工程引脚清单
+======================================
+
+生成依据：当前工程中的实际初始化代码、BSP 驱动和 CubeMX .ioc 配置。
+STM32 型号：STM32F407ZGT6，LQFP144。
+
+
+一、ESP32-S3 与 STM32F407 的 OTA 串口连接（最重要）
+--------------------------------------------------
+
+ESP32-S3 GPIO45（UART1_TX） ---> STM32F407 PA3（USART2_RX）
+ESP32-S3 GPIO46（UART1_RX） <--- STM32F407 PA2（USART2_TX）
+ESP32-S3 GND                 --- STM32F407 GND
+
+串口参数：115200 bit/s，8 数据位，1 停止位，无校验，无硬件流控。
+注意：两块板必须共地，串口信号为 3.3V TTL 电平，不要接到 RS-232 电平接口。
+
+
+二、ESP32-S3 固件实际使用的 GPIO
+--------------------------------
+
+GPIO15  输出，LEDC PWM 通道0，5 kHz；物模型亮度控制。
+GPIO16  普通推挽输出，内部下拉；物模型灯开关控制。
+GPIO18  输出，WS2812 数据线；驱动 3 颗灯珠。
+GPIO45  UART1_TX；向 STM32F407 发送 OTA 协议数据。
+GPIO46  UART1_RX；接收 STM32F407 返回的 OTA 协议数据。
+
+说明：Wi-Fi/OneNET 通信使用 ESP32-S3 内部 Wi-Fi，不占用固定的应用 GPIO。
+
+
+三、STM32F407 Bootloader（STM32-OTA/testB3）使用的引脚
+------------------------------------------------------
+
+[ESP32 OTA 串口]
+PA2   USART2_TX，接 ESP32-S3 GPIO46。
+PA3   USART2_RX，接 ESP32-S3 GPIO45；DMA1 Stream5 / Channel4。
+      USART2_TX 同时配置 DMA1 Stream6 / Channel4。
+
+[调试串口]
+PA9   USART1_TX，调试日志输出。
+PA10  USART1_RX；DMA2 Stream2 / Channel4。
+
+[W25Q128 外部 SPI Flash]
+PB3   SPI1_SCK。
+PB4   SPI1_MISO。
+PB5   SPI1_MOSI。
+PB14  W25Q128_CS，普通推挽输出，低电平选中，启动时置高。
+
+[AT24C02 EEPROM]
+PB8   I2C1_SCL。
+PB9   I2C1_SDA。
+
+[下载与调试]
+PA13  SWDIO。
+PA14  SWCLK。
+
+[系统时钟]
+PH0   HSE_OSC_IN。
+PH1   HSE_OSC_OUT。
+PC14  LSE_OSC32_IN（在 .ioc 中占用）。
+PC15  LSE_OSC32_OUT（在 .ioc 中占用）。
+
+
+四、STM32F407 A 区智能温湿度主应用使用的引脚
+------------------------------------------------
+
+[与 ESP32-S3 通信]
+PA2   USART2_TX，接 ESP32-S3 GPIO46。
+PA3   USART2_RX，接 ESP32-S3 GPIO45。
+
+[调试串口]
+PA9   USART1_TX。
+PA10  USART1_RX。
+
+[状态灯、蜂鸣器、温湿度、风扇]
+PF8   蜂鸣器 BEEP，推挽输出；应用中也直接控制该引脚。
+PF9   LED0，低电平点亮。
+PF10  LED1，低电平点亮。
+PG9   DHT11 单总线数据 DQ，输入/输出方向动态切换。
+PG14  风扇控制端1，推挽输出。
+PG15  风扇控制端2，推挽输出。
+
+[LCD：16 位 FSMC 数据总线]
+PD14  FSMC_D0。
+PD15  FSMC_D1。
+PD0   FSMC_D2。
+PD1   FSMC_D3。
+PE7   FSMC_D4。
+PE8   FSMC_D5。
+PE9   FSMC_D6。
+PE10  FSMC_D7。
+PE11  FSMC_D8。
+PE12  FSMC_D9。
+PE13  FSMC_D10。
+PE14  FSMC_D11。
+PE15  FSMC_D12。
+PD8   FSMC_D13。
+PD9   FSMC_D14。
+PD10  FSMC_D15。
+
+[LCD 控制]
+PD4   FSMC_NOE / LCD_RD。
+PD5   FSMC_NWE / LCD_WR。
+PF12  FSMC_A6 / LCD_RS（寄存器/数据选择）。
+PG12  FSMC_NE4 / LCD_CS。
+PB15  LCD_BL，背光开关，普通推挽输出。
+
+[外部 SRAM：FSMC 地址/控制总线]
+PF0   FSMC_A0。
+PF1   FSMC_A1。
+PF2   FSMC_A2。
+PF3   FSMC_A3。
+PF4   FSMC_A4。
+PF5   FSMC_A5。
+PF12  FSMC_A6（与 LCD_RS 共用总线地址线）。
+PF13  FSMC_A7。
+PF14  FSMC_A8。
+PF15  FSMC_A9。
+PG0   FSMC_A10。
+PG1   FSMC_A11。
+PG2   FSMC_A12。
+PG3   FSMC_A13。
+PG4   FSMC_A14。
+PG5   FSMC_A15。
+PD11  FSMC_A16。
+PD12  FSMC_A17。
+PD13  FSMC_A18。
+PE0   FSMC_NBL0。
+PE1   FSMC_NBL1。
+PG10  FSMC_NE3 / SRAM_CS。
+PD4   FSMC_NOE / SRAM_RD（与 LCD 共用）。
+PD5   FSMC_NWE / SRAM_WR（与 LCD 共用）。
+外部 SRAM 的 D0~D15 与上面的 LCD 16 位 FSMC 数据总线共用。
+
+[触摸屏：运行时按 LCD 型号选择驱动]
+电容触摸（FT5206/GT9xxx）：
+PB0   软件 I2C SCL。
+PF11  软件 I2C SDA。
+PB1   触摸 INT 输入。
+PC13  触摸 RST 输出。
+
+电阻触摸备用路径：
+PB0   T_CLK。
+PB1   T_PEN。
+PB2   T_MISO。
+PF11  T_MOSI。
+PC13  T_CS。
+
+[按键及校准 EEPROM：驱动中使用/校准时可能使用]
+PE4   KEY0。
+PE3   KEY1。
+PE2   KEY2。
+PA0   WK_UP 键。
+PB8   软件 I2C SCL，AT24Cxx 校准数据。
+PB9   软件 I2C SDA，AT24Cxx 校准数据。
+
+[下载与系统时钟]
+PA13  SWDIO。
+PA14  SWCLK。
+PH0   HSE_OSC_IN。
+PH1   HSE_OSC_OUT。
+PC14  LSE_OSC32_IN（在 .ioc 中占用）。
+PC15  LSE_OSC32_OUT（在 .ioc 中占用）。
+
+
+五、STM32F407 OTA 测试应用（STM32-OTA/testA2）使用的引脚
+---------------------------------------------------------
+
+PA2   USART2_TX，接 ESP32-S3 GPIO46。
+PA3   USART2_RX，接 ESP32-S3 GPIO45。
+PA9   USART1_TX，调试串口。
+PA10  USART1_RX，调试串口。
+PF9   普通推挽输出，启动时置高。
+PF10  普通推挽输出，启动时置高。
+PA13  SWDIO。
+PA14  SWCLK。
+PH0   HSE_OSC_IN。
+PH1   HSE_OSC_OUT。
+PC14  LSE_OSC32_IN（在 .ioc 中占用）。
+PC15  LSE_OSC32_OUT（在 .ioc 中占用）。
+
+
+六、主要代码依据
+----------------
+
+ESP32S3-OTA/main/main.c
+ESP32S3-OTA/main/iot/onenet_dm.c
+STM32-OTA/testB3/test1.ioc
+STM32-OTA/testB3/Core/Src/gpio.c
+STM32-OTA/testB3/Core/Src/usart.c
+STM32-OTA/testB3/Core/Src/spi.c
+STM32-OTA/testB3/Core/Src/i2c.c
+STM32-OTA/testB3/Drivers/bootloader_drivers/inc/W25Q128.h
+STM32-OTA/testA2/testA1.ioc
+STM32-OTA/testA2/Core/Src/gpio.c
+STM32-OTA/A区智能温湿度控制系统v2.0/LVGL_RTOS_DOME5.ioc
+STM32-OTA/A区智能温湿度控制系统v2.0/Drivers/SYSTEM/usart/usart.c
+STM32-OTA/A区智能温湿度控制系统v2.0/Drivers/BSP/LCD/lcd.c
+STM32-OTA/A区智能温湿度控制系统v2.0/Drivers/BSP/SRAM/sram.c
+STM32-OTA/A区智能温湿度控制系统v2.0/Drivers/BSP/TOUCH/
+STM32-OTA/A区智能温湿度控制系统v2.0/Drivers/Module_driver/
+
+备注：本清单区分了主运行路径与驱动中的条件路径；条件路径引脚即使当前屏幕型号未触发，也应避免被其他功能重复占用。
+
+
+七、ESP32-S3 ↔ STM32F407 OTA 串口通信协议
+==========================================
+（本节描述当前工程代码中实际在线上跑的协议；代码依据见 ESP32S3-OTA/main/board/inc/myuart.h
+  与 STM32-OTA/testB3/Drivers/bootloader_drivers/inc/TaskTest.h。）
+
+7.1 物理层与链路层
+------------------
+物理介质：3.3V TTL 电平 UART，两板共地。
+串口参数：波特率 115200，8 数据位，1 停止位，无奇偶校验，无硬件流控。
+通信模型：主从式停止等待（Stop-and-Wait）。ESP32-S3 为主机负责推进流程，
+         STM32F407 为从机，每收到一帧合法数据回 ACK，否则静默丢弃。
+可靠性：逐帧 CRC32 校验 + ACK 确认 + 超时重传（最大重试 5 次）。
+方向约定：下文“→”表示 ESP32 发往 STM32，“←”表示 STM32 发往 ESP32。
+
+7.2 帧通用标识
+--------------
+包头       0x66     标识一帧开始
+包尾       0xBB     标识一帧结束
+分隔符     0x2F     仅在固件信息帧中用两个连续 0x2F 0x2F 分隔“固件大小”与“版本号”
+字节序：除 ASCII 版本号外，所有多字节整数字段（大小、序号、长度、CRC）均按
+         大端序在线上传输：高字节在前、低字节在后。
+         例：固件大小 0x00076F3C 在线上为 00 07 6F 3C。
+
+7.3 命令码定义
+--------------
+0x01  升级通知   ESP32→STM32  通知 STM32 准备进入升级流程
+0x02  ACK应答    STM32→ESP32  确认收到上一帧
+0x03  确认       ESP32→STM32  第二次握手，确认建立通信链路
+0x04  开始传输   ESP32→STM32  通知开始传输；STM32 收到后先擦除 A 区 Flash 再回 ACK
+0x05  固件信息   ESP32→STM32  携带固件大小与版本号
+0x06  固件数据   ESP32→STM32  携带一个数据分片（≤1024 字节）
+0x07  升级结束   ESP32→STM32  通知所有数据发送完毕；STM32 回 ACK 后重启
+
+7.4 帧类型与字节布局
+--------------------
+
+(1) 简单命令帧 —— 3 字节（命令 0x01/0x02/0x03/0x04/0x07）
+    | 偏移 | 内容   | 说明          |
+    | 0    | 0x66   | 包头          |
+    | 1    | 命令字 | 见 7.3        |
+    | 2    | 0xBB   | 包尾          |
+
+(2) 固件信息帧 —— 25 字节（命令 0x05，当前实际格式）
+    | 偏移   | 内容          | 长度 | 说明                          |
+    | 0      | 0x66          | 1    | 包头                          |
+    | 1      | 0x05          | 1    | 命令字                        |
+    | 2-5    | 固件大小       | 4    | 大端序，单位字节               |
+    | 6-7    | 0x2F 0x2F     | 2    | 分隔符                        |
+    | 8-15   | 版本号         | 8    | ASCII，不足补 0x00            |
+    | 16-19  | 固件CRC32     | 4    | 大端序，整个固件文件的CRC32，端到端校验用 |
+    | 20-23  | 帧CRC32       | 4    | 大端序，帧自身完整性校验，见 7.6/7.8 说明 |
+    | 24     | 0xBB          | 1    | 包尾                          |
+    说明：固件CRC32 = 对整个固件文件计算（ESP32下载时流式累加），STM32收完0x07后用它做端到端校验；
+         帧CRC32 = 对 packet[1]~packet[19]（命令+大小+分隔符+版本号+固件CRC32，共 19 字节）计算，
+         不含包头、不含帧CRC自身、不含包尾。STM32解析时重算这19字节与帧CRC比对（帧CRC自校验）。
+
+(3) 固件数据帧 —— 变长，最大 1037 字节（命令 0x06）
+    | 偏移        | 内容        | 长度  | 说明                          |
+    | 0          | 0x66        | 1     | 包头                          |
+    | 1          | 0x06        | 1     | 命令字                        |
+    | 2-3        | 包序号       | 2     | 大端序，从 0 递增             |
+    | 4-7        | 数据长度     | 4     | 大端序，≤1024                |
+    | 8~8+len-1  | 数据         | ≤1024 | 固件分片                      |
+    | 8+len~11+len | 数据CRC32 | 4     | 大端序，只对“数据”部分计算   |
+    | 12+len     | 0xBB        | 1     | 包尾                          |
+    说明：数据 CRC32 只校验“数据”字段本身（不含包头/命令/序号/长度/包尾）。
+         最后一包若不足 1024 字节，ESP32 端用 0xFF 填充到 1024 再发，
+         STM32 端按信息帧里的“固件大小”截断，忽略填充部分。
+         最大长度 = 1+1+2+4+1024+4+1 = 1037 字节。
+
+7.5 完整升级流程（状态机）
+-------------------------
+1) ESP32 → STM32：升级通知(0x01)              STM32 进入升级准备态
+2) STM32 → ESP32：ACK(0x02)
+3) ESP32 → STM32：确认(0x03)                  第二次握手，建立链路
+4) STM32 → ESP32：ACK(0x02)
+5) ESP32 → STM32：开始传输(0x04)              STM32 收到后先擦除 A 区 Flash
+6) STM32 → ESP32：ACK(0x02)                   // 擦除完成才应答，超时设 8s
+7) ESP32 → STM32：固件信息(0x05)              携带大小与版本号
+8) STM32 → ESP32：ACK(0x02)
+9) ESP32 → STM32：数据包 0..N-1(0x06)         循环发送
+   STM32 → ESP32：ACK(0x02)                    每包都应答，坏帧静默丢、等超时重发
+10) ESP32 → STM32：升级结束(0x07)
+11) STM32 → ESP32：ACK(0x02)                  然后 STM32 重启进入新固件
+STM32 端状态机：IDLE → WAIT_CONFIRM → WAIT_START → WAIT_INFO → WAIT_DATA
+              → WAIT_END → UPGRAD_SUCCESS/FAILED → JUMP_TO_APP
+              （IDLE 超时未收到升级请求时直接 JUMP_TO_APP 跳转 A 区 APP）
+
+7.6 CRC32 算法
+--------------
+多项式：0xEDB88320（即标准 CRC-32 的反射多项式）
+初值：0xFFFFFFFF，最终异或 0xFFFFFFFF
+实现：ESP32 端 calculate_crc32()（软件查表/位运算，注释称与 STM32 硬件 CRC 兼容）；
+      STM32 端 OTA_CalcCRC32()（同多项式）。
+两个层面：
+  - 逐帧 CRC：数据帧中只对 1024 字节数据算，保护传输链路；
+  - 固件整体 CRC：对整个固件文件算，保护“落盘”端到端正确性（见 7.8）。
+
+7.7 超时与重试参数
+------------------
+普通命令超时       8000 ms   （STM32 擦除 Flash 耗时较长）
+握手等待超时       10000 ms  （ESP32 端）/ 二次握手 5000 ms（STM32 端）
+数据帧超时         3000 ms   （STM32 端）
+最大重试次数       ESP32 端 5 次 / STM32 端 3 次
+
+7.8 已知问题与改进规划（待实施）
+-------------------------------
+【问题】信息帧偏移 16-19 的 CRC32 当前是“帧自身 CRC”，但 STM32 端
+OTA_ParseFirmwareInfo() 将其解析为 firmware_crc32 并存入 g_ota_ctx.firmware_crc32，
+当作“整个固件的期望 CRC”。两端对该字段语义理解不一致：
+  - ESP32：帧完整性 CRC（只覆盖 15 字节帧头内容）
+  - STM32：当作整个 487228 字节固件的 CRC
+后果：若直接启用 OTA_VerifyFirmwareCRC()，即使固件写入完全正确也会校验失败
+      （期望值是 15 字节帧 CRC，实际算的是 487228 字节固件 CRC，必然不等）。
+附：STM32 解析信息帧时仅校验了包头/包尾/命令字/分隔符，未重算帧 CRC 自校验。
+
+【已实施】信息帧 21 字节 → 25 字节，两个 CRC 字段各司其职：
+  | 0x66 | 0x05 | 大小(4) | 0x2F 0x2F | 版本(8) | 固件CRC32(4) | 帧CRC32(4) | 0xBB |
+  - 固件CRC32：对整个固件文件计算，端到端校验用；
+  - 帧CRC32：对“命令+大小+分隔符+版本号+固件CRC32”共 19 字节计算，帧完整性用。
+  ESP32 端：下载固件到 SPIFFS 时流式累加计算固件 CRC32（crc32_stream_*，与 MD5 同流程），
+            存入 firmware_crc32，经 set_firmware_info() 传入，send_firmware_info() 组 25 字节帧下发。
+  STM32 端：OTA_INFO_FRAME_LEN=25，OTA_ParseFirmwareInfo() 解析偏移调整（固件CRC在16-19，
+            帧CRC在20-23，包尾在24）并补帧 CRC 自校验；收到 0x07 后调用 OTA_VerifyFirmwareCRC()，
+            失败则置 s_app_firmware_invalid 标志、停在 Bootloader 不跳转（A区已损坏），等待重新升级/SWD恢复。
+本节随代码修改同步更新。
+
+7.9 Flash 分区（OTA 相关）
+--------------------------
+B 区（Bootloader）起始：0x08000000
+A 区（APP）起始：        0x08010000   （固件写入目标区）
+A 区擦除范围：扇区 4~11（共 8 个扇区）
+跳转校验：STM32 读 A 区首地址的栈指针与复位向量，合法才跳转。
+外部存储：W25Q128（SPI Flash，PB3/PB4/PB5/PB14）已接好，规划用于 A/B 分区备份回滚。
+固件元信息：AT24C02（I2C1，PB8/PB9）存储版本号等升级信息。

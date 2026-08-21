@@ -20,6 +20,7 @@ TaskHandle_t recive_buff1_handle = NULL;      /* 串口接收任务句柄 */
 /* 固件传输相关全局变量 */
 static int g_firmware_size = 0;               /* 固件大小（字节） */
 static char g_firmware_version[16] = {0};     /* 固件版本号字符串 */
+static uint32_t g_firmware_crc32 = 0;        /* 整个固件文件的CRC32（端到端校验用，由下载时流式计算得到） */
 
 /*============================================================================
  *                           函数前置声明
@@ -216,21 +217,41 @@ esp_err_t uartData_to_oneNET(uint8_t* uart_buffr)
  *============================================================================*/
 
 /**
- * @brief 计算标准CRC32校验值
+ * @brief 计算标准CRC32校验值（一次性，对整块数据）
  * @param data 待计算的数据指针
  * @param len 数据长度
  * @return CRC32校验值（32位无符号整数）
- * 
+ *
  * @note 标准CRC-32算法参数：
  *       - 多项式: 0xEDB88320 (反向表示)
  *       - 初始值: 0xFFFFFFFF
  *       - 最终异或: 0xFFFFFFFF
- *       - 与STM32硬件CRC单元兼容
+ *       - 与STM32端OTA_CalcCRC32兼容
+ *       逐帧CRC与固件整体CRC使用同一算法，保证可比性。
  */
 uint32_t calculate_crc32(const uint8_t *data, size_t len)
 {
-    uint32_t crc = 0xFFFFFFFF;  /* 初始值 */
-    
+    return crc32_stream_final(crc32_stream_update(crc32_stream_init(), data, len));
+}
+
+/**
+ * @brief 流式CRC32初值
+ * @return 0xFFFFFFFF（标准CRC-32初值）
+ */
+uint32_t crc32_stream_init(void)
+{
+    return 0xFFFFFFFFU;
+}
+
+/**
+ * @brief 流式CRC32累加一段数据（不做最终异或，可跨chunk连续调用）
+ * @param crc 上一次的累加值（首次用 crc32_stream_init() 的返回值）
+ * @param data 本段数据指针
+ * @param len 本段数据长度
+ * @return 累加后的中间值（未做最终异或）
+ */
+uint32_t crc32_stream_update(uint32_t crc, const uint8_t *data, size_t len)
+{
     for (size_t i = 0; i < len; i++)
     {
         crc ^= data[i];
@@ -238,7 +259,7 @@ uint32_t calculate_crc32(const uint8_t *data, size_t len)
         {
             if (crc & 1)
             {
-                crc = (crc >> 1) ^ 0xEDB88320;  /* 反向多项式 */
+                crc = (crc >> 1) ^ 0xEDB88320U;  /* 反向多项式 */
             }
             else
             {
@@ -246,8 +267,17 @@ uint32_t calculate_crc32(const uint8_t *data, size_t len)
             }
         }
     }
-    
-    return crc ^ 0xFFFFFFFF;  /* 最终异或 */
+    return crc;
+}
+
+/**
+ * @brief 流式CRC32收尾：做最终异或，得到最终CRC32
+ * @param crc crc32_stream_update() 的最后返回值
+ * @return 最终CRC32校验值
+ */
+uint32_t crc32_stream_final(uint32_t crc)
+{
+    return crc ^ 0xFFFFFFFFU;  /* 最终异或 */
 }
 
 /**
@@ -339,23 +369,28 @@ esp_err_t send_handshake_confirm(uart_port_t uart_num)
  * @param uart_num 串口号
  * @param firmware_size 固件大小（字节）
  * @param version 固件版本号字符串
+ * @param fw_crc 整个固件文件的CRC32（端到端校验值）
  * @return ESP_OK成功，ESP_FAIL失败
  * 
- * @note 数据包格式（共21字节）：
- *       | 字节偏移 | 内容          | 说明                    |
- *       |----------|---------------|------------------------|
- *       | 0        | 0x66          | 包头                    |
- *       | 1        | 0x05          | 固件信息命令             |
- *       | 2-5      | firmware_size | 固件大小（大端序，4字节） |
- *       | 6-7      | 0x2F 0x2F     | 分隔符                  |
- *       | 8-15     | version       | 版本号（8字节，不足补0） |
- *       | 16-19    | CRC32         | 校验值（大端序，4字节）  |
- *       | 20       | 0xBB          | 包尾                    |
+ * @note 数据包格式（共25字节）：
+ *       | 字节偏移 | 内容          | 说明                            |
+ *       |----------|---------------|--------------------------------|
+ *       | 0        | 0x66          | 包头                            |
+ *       | 1        | 0x05          | 固件信息命令                     |
+ *       | 2-5      | firmware_size | 固件大小（大端序，4字节）         |
+ *       | 6-7      | 0x2F 0x2F     | 分隔符                          |
+ *       | 8-15     | version       | 版本号（8字节，不足补0）         |
+ *       | 16-19    | fw_crc        | 固件整体CRC32（大端序，4字节）   |
+ *       | 20-23    | frame_crc     | 帧CRC32（大端序，4字节）         |
+ *       | 24       | 0xBB          | 包尾                            |
+ *       
+ *       固件整体CRC32：对整个固件文件计算，STM32端收完数据后用它做端到端校验。
+ *       帧CRC32：对 packet[1]~packet[19]（命令+大小+分隔符+版本号+固件CRC32，共19字节）计算，保证帧自身完整。
  *       
  *       大端序说明：高字节在前，低字节在后
  *       例如：固件大小0x00012345，存储为：00 01 23 45
  */
-esp_err_t send_firmware_info(uart_port_t uart_num, int firmware_size, const char* version)
+esp_err_t send_firmware_info(uart_port_t uart_num, int firmware_size, const char* version, uint32_t fw_crc)
 {
     uint8_t packet[SERIAL_FW_INFO_PACKET_SIZE];
     int pos = 0;
@@ -397,23 +432,32 @@ esp_err_t send_firmware_info(uart_port_t uart_num, int firmware_size, const char
             packet[pos++] = 0x00;  /* 填充0x00 */
         }
     }
-    
-    /* 计算CRC32校验值
-     * 校验范围：从命令码开始到版本号结束（不包含包头和CRC32本身）
-     * 即：packet[1] 到 packet[15]，共15字节
+
+    /* 固件整体CRC32：4字节，大端序存储
+     * 这是整个固件文件的CRC32，STM32端收完数据后用它做端到端校验
      */
-    uint32_t crc = calculate_crc32(&packet[1], pos - 1);
+    packet[pos++] = (fw_crc >> 24) & 0xFF;
+    packet[pos++] = (fw_crc >> 16) & 0xFF;
+    packet[pos++] = (fw_crc >> 8) & 0xFF;
+    packet[pos++] = fw_crc & 0xFF;
     
-    /* CRC32：4字节，大端序存储 */
-    packet[pos++] = (crc >> 24) & 0xFF;
-    packet[pos++] = (crc >> 16) & 0xFF;
-    packet[pos++] = (crc >> 8) & 0xFF;
-    packet[pos++] = crc & 0xFF;
+    /* 帧CRC32校验值
+     * 校验范围：从命令码开始到固件CRC32结束（不包含包头和帧CRC32本身）
+     * 即：packet[1] 到 packet[19]，共19字节
+     */
+    uint32_t frame_crc = calculate_crc32(&packet[1], pos - 1);
+    
+    /* 帧CRC32：4字节，大端序存储 */
+    packet[pos++] = (frame_crc >> 24) & 0xFF;
+    packet[pos++] = (frame_crc >> 16) & 0xFF;
+    packet[pos++] = (frame_crc >> 8) & 0xFF;
+    packet[pos++] = frame_crc & 0xFF;
     
     /* 包尾 */
     packet[pos++] = SERIAL_PACKET_TAIL;
     
-    ESP_LOGI(TAG, "Sending firmware info: size=%d, version=%s, CRC=0x%08" PRIx32, firmware_size, version, crc);
+    ESP_LOGI(TAG, "Sending firmware info: size=%d, version=%s, fw_crc=0x%08" PRIx32 ", frame_crc=0x%08" PRIx32,
+             firmware_size, version, fw_crc, frame_crc);
     
     return send_packet_with_retry(uart_num, packet, pos, SERIAL_CMD_ACK);
 }
@@ -659,7 +703,7 @@ esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path)
      * 总长度：17字节
      */
     ESP_LOGI(TAG, "Step 4: Sending firmware info...");
-    ret = send_firmware_info(uart_num, (int)file_size, g_firmware_version);
+    ret = send_firmware_info(uart_num, (int)file_size, g_firmware_version, g_firmware_crc32);
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to send firmware info");
@@ -770,11 +814,13 @@ cleanup:
  * @brief 设置固件信息（在传输前调用）
  * @param firmware_size 固件大小（字节）
  * @param version 固件版本号字符串
+ * @param fw_crc 整个固件文件的CRC32（端到端校验值）
  * @note 该函数将固件信息保存到全局变量，供后续传输使用
  */
-void set_firmware_info(int firmware_size, const char* version)
+void set_firmware_info(int firmware_size, const char* version, uint32_t fw_crc)
 {
     g_firmware_size = firmware_size;
+    g_firmware_crc32 = fw_crc;
     if (version != NULL)
     {
         /* 安全复制版本号字符串，防止缓冲区溢出 */
