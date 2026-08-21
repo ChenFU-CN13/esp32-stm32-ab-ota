@@ -7,6 +7,7 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
+#include <stdbool.h>
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "onenet_mqtt.h"
@@ -60,6 +61,19 @@
 #define SERIAL_CMD_FW_DATA          0x06    /* 固件数据：包含一个数据分片 */
 #define SERIAL_CMD_UPGRADE_END      0x07    /* 升级结束：通知STM32重启 */
 
+#define SERIAL_CMD_ABORT            0x08    /* 放弃传输：通知STM32重置回IDLE */
+#define SERIAL_CMD_NACK             0x0A    /* STM32否定应答，携带1字节错误码 */
+
+/* NACK错误码（与STM32端TaskTest.h保持一致） */
+#define NACK_ERR_FRAME_CRC          0x01    /* 帧CRC失败(可重发恢复) */
+#define NACK_ERR_STATE_MISMATCH     0x02    /* 状态不同步：ABORT对齐后外层重试 */
+#define NACK_ERR_BAD_LENGTH         0x03    /* 帧长非法(可重发恢复) */
+#define NACK_ERR_FLASH_ERROR        0x04    /* Flash写失败：硬件故障，不可恢复 */
+#define NACK_ERR_FW_CRC_FAIL        0x05     /* 固件整体CRC失败：数据损坏，不可恢复 */
+#define NACK_ERR_UNKNOWN_CMD        0x06    /* 未知命令：通常为噪声扰动，可恢复 */
+#define NACK_ERR_PACKET_SEQ         0x07    /* 包序号异常，可恢复 */
+
+
 /*---------------------------- 传输参数配置 ----------------------------*/
 #define SERIAL_DATA_CHUNK_SIZE      1024    /* 每个数据包的数据长度，1KB */
 #define SERIAL_MAX_RETRY_COUNT      5       /* 最大重试次数，超过则判定传输失败 */
@@ -97,7 +111,8 @@ typedef struct
 } uart_oneNET_data_t;
 
 extern QueueHandle_t uart_oneNET_data_queue;   /* 串口数据传递oneNET队列 */
-
+extern volatile uint8_t g_last_nack_err;   /* 最近一次收到的NACK错误码，0=无 */
+extern volatile bool g_ota_uart_busy;      /* OTA传输期间串口归OTA任务独占（标志门控，替代vTaskSuspend） */
 /*============================================================================
  *                           函数声明
  *============================================================================*/
@@ -129,6 +144,15 @@ uint32_t crc32_stream_update(uint32_t crc, const uint8_t *data, size_t len);   /
 uint32_t crc32_stream_final(uint32_t crc);                                     /* 做最终异或，返回最终CRC32 */
 
 /**
+ * @brief 发送ABORT命令对齐状态或直接放弃上报
+ * @param uart_num 串口号
+ * @return ESP_OK成功，ESP_FAIL失败
+ * @note 用于在传输失败时，对齐状态或直接放弃上报
+ */
+esp_err_t send_abort(uart_port_t uart_num);
+
+
+/**
  * @brief 带重试机制的数据包发送函数
  * @param uart_num 串口号
  * @param data 待发送数据指针
@@ -151,9 +175,13 @@ void set_firmware_info(int firmware_size, const char* version, uint32_t fw_crc);
  * @brief 通过串口发送固件到STM32
  * @param uart_num 串口号
  * @param firmware_path 固件文件路径（SPIFFS文件系统中的路径）
+ * @param stm32_in_bootloader 是否在STM32引导模式下（true/false）
+ * @note 用于判断是否需要发送ABORT命令对齐状态或直接放弃上报
+ * @note 传输前会先设置固件信息，传输后会发送END命令
  * @return ESP_OK成功，ESP_FAIL失败
  * @note 完整的固件传输流程，包括握手、数据传输、结束确认
  */
-esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path);
+esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path, bool stm32_in_bootloader);
+
 
 #endif

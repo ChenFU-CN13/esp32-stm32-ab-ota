@@ -99,14 +99,33 @@
  *   5. 0x05: 固件信息 - 包含固件大小、版本号、CRC32校验值
  *   6. 0x06: 固件数据 - 实际的固件数据包(每包最多1024字节)
  *   7. 0x07: 升级结束 - ESP32通知所有数据发送完毕
+ *   8. 0x08: ESP32→STM32: 放弃本次传输，STM32重置回IDLE
+ *   9. 0x0A: STM32→ESP32: 否定应答，携带1字节错误码
  */
-#define OTA_CMD_UPGRADE_NOTIFY          0x01        
-#define OTA_CMD_ACK                     0x02        
-#define OTA_CMD_CONFIRM                 0x03        
-#define OTA_CMD_START_TRANSFER          0x04        
-#define OTA_CMD_FIRMWARE_INFO           0x05        
-#define OTA_CMD_FIRMWARE_DATA           0x06        
-#define OTA_CMD_UPGRADE_END             0x07        
+#define OTA_CMD_UPGRADE_NOTIFY          0x01    /* ESP32→STM32: 升级通知，A区处理 */
+#define OTA_CMD_ACK                     0x02    /* STM32→ESP32: 确认应答 */    
+#define OTA_CMD_CONFIRM                 0x03    /* ESP32→STM32: 确认升级，STM32重启后等待此命令 */    
+#define OTA_CMD_START_TRANSFER          0x04    /* ESP32→STM32: 开始传输，STM32擦除Flash */    
+#define OTA_CMD_FIRMWARE_INFO           0x05    /* ESP32→STM32: 固件信息，包含固件大小、版本号、CRC32校验值 */    
+#define OTA_CMD_FIRMWARE_DATA           0x06    /* ESP32→STM32: 固件数据，实际的固件数据包(每包最多1024字节) */    
+#define OTA_CMD_UPGRADE_END             0x07    /* ESP32→STM32: 升级结束，STM32通知所有数据发送完毕 */    
+#define OTA_CMD_ABORT                   0x08    /* ESP32→STM32: 放弃本次传输，STM32重置回IDLE */
+#define OTA_CMD_NACK                    0x0A    /* STM32→ESP32: 否定应答，携带1字节错误码 */
+
+
+/*NACK错误码定义*/
+#define  OTA_NACK_FRAME_CRC             0x01        /* 帧CRC校验失败(传输干扰，可重发恢复) */
+#define  OTA_NACK_STATE_MISMATCH        0x02         /* 状态不匹配(时序错位，需ABORT对齐) */
+#define  OTA_NACK_BAD_LENGTH            0x03          /* 帧长非法 */
+#define OTA_NACK_FLASH_ERROR            0x04        /* Flash擦除/写入失败(硬件问题) */
+#define OTA_NACK_FW_CRC_FAIL            0x05        /* 固件整体CRC校验失败 */
+#define OTA_NACK_UNKNOWN_CMD            0x06        /* 未知命令 */
+#define OTA_NACK_PACKET_SEQ             0x07        /* 包序号异常(乱序) */
+
+
+/* NACK帧格式: | 0x66 | 0x0A | err_code | 0xBB | 共4字节 */
+#define OTA_NACK_FRAME_LEN             4
+
 
 /**
  * @brief 协议帧长度定义
@@ -296,6 +315,11 @@ void OTA_SendSimpleFrame(uint8_t cmd);
  * @brief 发送ACK应答帧
  */
 void OTA_SendACK(void);
+
+/**
+ * @brief 发送NACK应答帧
+ */
+void OTA_SendNACK(uint8_t err_code);
 
 
 /*============================ 协议帧解析函数 ============================*/
