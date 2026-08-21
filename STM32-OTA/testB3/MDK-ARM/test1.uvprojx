@@ -1099,11 +1099,6 @@
               <FileType>1</FileType>
               <FilePath>..\Drivers\bootloader_drivers\src\command.c</FilePath>
             </File>
-            <File>
-              <FileName>usart2_boot.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Drivers\bootloader_drivers\src\usart2_boot.c</FilePath>
-            </File>
           </Files>
         </Group>
         <Group>

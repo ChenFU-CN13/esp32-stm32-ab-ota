@@ -114,8 +114,10 @@
  * 简单命令帧格式 (3字节):
  *   | 包头(0x66) | 命令字 | 包尾(0xBB) |
  * 
- * 固件信息帧格式 (21字节):
- *   | 0x66 | 0x05 | 固件大小(4B,大端序) | 分隔符(0x2F 0x2F) | 版本号(8B,ASCII) | CRC32(4B,大端序) | 0xBB |
+ * 固件信息帧格式 (25字节):
+ *   | 0x66 | 0x05 | 固件大小(4B,大端序) | 分隔符(0x2F 0x2F) | 版本号(8B,ASCII) | 固件CRC32(4B,大端序) | 帧CRC32(4B,大端序) | 0xBB |
+ *   说明：固件CRC32 = 整个固件文件的CRC32（端到端校验）；
+ *         帧CRC32  = 对"命令+大小+分隔符+版本号+固件CRC32"共19字节计算的CRC（帧完整性）。
  * 
  * 数据帧格式 (变长，最大1037字节):
  *   | 0x66 | 0x06 | 包序号(2B,大端序) | 数据长度(4B,大端序) | 数据(≤1024B) | CRC32(4B,大端序) | 0xBB |
@@ -125,9 +127,9 @@
  * @note 版本号为ASCII字符串，如 "v1.0.2"，不足8字节用0x00填充
  */
 #define OTA_SIMPLE_FRAME_LEN            3                   
-#define OTA_INFO_FRAME_LEN              21                  
-#define OTA_DATA_FRAME_HEADER_LEN       12                  
-#define OTA_DATA_FRAME_TAIL_LEN         1                   
+#define OTA_INFO_FRAME_LEN              25                  
+#define OTA_DATA_FRAME_HEADER_LEN       8       // 数据帧真头部：包头1+命令1+序号2+长度4=8字节（CRC与包尾另算）
+#define OTA_DATA_FRAME_TAIL_LEN         5       // 数据帧尾部：CRC32(4)+包尾(1)=5字节
 #define OTA_DATA_PAYLOAD_LEN            1024                
 #define OTA_DATA_FRAME_MAX_LEN          (OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_PAYLOAD_LEN + OTA_DATA_FRAME_TAIL_LEN)
 
@@ -136,9 +138,9 @@
 /**
  * @brief 超时和重试配置
  */
-#define OTA_HANDSHAKE_TIMEOUT_MS        5000        
-#define OTA_FRAME_TIMEOUT_MS            3000        
-#define OTA_MAX_RETRY_COUNT             3           
+#define OTA_HANDSHAKE_TIMEOUT_MS        5000        // 二次握手超时时间
+#define OTA_FRAME_TIMEOUT_MS            3000        // 数据帧超时时间
+#define OTA_MAX_RETRY_COUNT             3           // 最大重试次数
 
 
 /*============================================================================*/
