@@ -589,26 +589,6 @@ static void onenet_ota_task(void *param)
 
     for(;;)
     {
-      //  if(need_send_firmware)
-      //  {
-      //      set_firmware_info(firmware_size, target_version, firmware_crc32);
-      //      //set_firmware_info(firmware_size, "v1.0.4", 0);//测试用
-      //      esp_err_t ret = serial_send_firmware(UART_NUM_1, FIRMWARE_FILE_PATH);
-      //      if (ret == ESP_OK)
-      //      {
-      //          /* 固件传输成功，清除标志 */
-      //          need_send_firmware = false;
-      //          ESP_LOGI(TAG, "Firmware transmission success, task completed");
-      //          goto delete_ota_task;
-      //      }
-      //      else
-      //      {
-      //          /* 固件传输失败，保持标志为true，下次循环重新尝试握手 */
-      //          ESP_LOGW(TAG, "Firmware transmission failed, will retry...");
-      //      }
-      //  }
-      //  vTaskDelay(pdMS_TO_TICKS(500));
-
             if (need_send_firmware)
             {
                 /* 先判断重试上限 */
