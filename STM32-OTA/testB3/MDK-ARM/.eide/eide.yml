@@ -64,6 +64,10 @@ virtualFolder:
             - path: ../Drivers/bootloader_drivers/src/AT24C02.c
             - path: ../Drivers/bootloader_drivers/src/W25Q128.c
             - path: ../Drivers/bootloader_drivers/src/TaskTest.c
+            - path: ../Drivers/bootloader_drivers/src/bootloader.c
+            - path: ../Drivers/bootloader_drivers/src/ota_proto.c
+            - path: ../Drivers/bootloader_drivers/src/ota_storage.c
+            - path: ../Drivers/bootloader_drivers/src/ota_core.c
             - path: ../Drivers/bootloader_drivers/src/MyFLASH.c
           folders: []
     - name: ::CMSIS

@@ -71,8 +71,8 @@ int main(void)
 	MX_GPIO_Init();
 
     
-    delay_init(); 						
-    usart_init(115200);//注意:这个是串口1 
+  delay_init(); 						
+  usart_init(115200);//注意:这个是串口1 
 	USART2_DMA1_Init();
 	USART2_Init(115200);
 	sram_init();

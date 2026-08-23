@@ -38,7 +38,7 @@ void vMQTT_ONENET_Task(void* pvParameters)
 
         nvs_flash_init();
         //onenet物模型数据初始化
-        onenet_dm_init();
+        onenet_dm_init();//包含物模型数据传输任务
         wifi_ev = xEventGroupCreate();
         wifi_manager_init(wifi_state_callback);
         wifi_manager_connect(DEFAULT_SSID,DEFAULT_PASSWORD);
@@ -60,33 +60,6 @@ void vMQTT_ONENET_Task(void* pvParameters)
 
 void app_main(void)
 {
-
-
-    #if 0
-            nvs_flash_init();
-    //onenet物模型数据初始化
-    onenet_dm_init();
-    wifi_ev = xEventGroupCreate();
-    wifi_manager_init(wifi_state_callback);
-    wifi_manager_connect(DEFAULT_SSID,DEFAULT_PASSWORD);
-    EventBits_t ev;
-    for (;;)
-    {
-        ev = xEventGroupWaitBits(wifi_ev,EV_WIFI_CONNECTED_BIT,pdTRUE,pdFALSE,portMAX_DELAY);
-        if (ev & EV_WIFI_CONNECTED_BIT)
-        {
-            onenet_start();
-        }
-        
-    }
-    #endif
-    
-
-
-    #if 0
-    UART_config_init_AND_UART_recive(&myuart,UART_NUM_0);
-    onenet_dm_init();
-    #endif
 
     #if 1
         
