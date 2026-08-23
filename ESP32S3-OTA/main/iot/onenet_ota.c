@@ -577,7 +577,7 @@ static void onenet_ota_task(void *param)
       {
           ESP_LOGI(TAG,"Download firmware success!");
           // 上报下载成功状态
-          onenet_ota_upload_status(task_id, 100);//code 100表示下载成功
+          //onenet_ota_upload_status(task_id, 100);//code 100表示下载成功
           test_read_firmware();//测试读取固件，是否碎片化固件、
           need_send_firmware = true;//需要发送固件
       }

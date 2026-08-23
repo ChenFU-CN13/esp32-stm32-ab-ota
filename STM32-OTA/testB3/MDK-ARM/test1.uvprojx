@@ -1090,6 +1090,26 @@
               <FilePath>..\Drivers\bootloader_drivers\src\TaskTest.c</FilePath>
             </File>
             <File>
+              <FileName>bootloader.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\bootloader_drivers\src\bootloader.c</FilePath>
+            </File>
+            <File>
+              <FileName>ota_proto.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\bootloader_drivers\src\ota_proto.c</FilePath>
+            </File>
+            <File>
+              <FileName>ota_storage.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\bootloader_drivers\src\ota_storage.c</FilePath>
+            </File>
+            <File>
+              <FileName>ota_core.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\bootloader_drivers\src\ota_core.c</FilePath>
+            </File>
+            <File>
               <FileName>MyFLASH.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\bootloader_drivers\src\MyFLASH.c</FilePath>
