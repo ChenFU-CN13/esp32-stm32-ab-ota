@@ -31,6 +31,10 @@ ESP32S3-OTA/sdkconfig.old
 *.uvguix.*
 *.uvoptx.tmp
 
+
+**/.eide/
+
+
 # WorkBuddy / AI 助手工作目录（本地记忆，不入库）
 .workbuddy/
 .codex/
