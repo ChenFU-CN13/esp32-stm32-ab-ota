@@ -32,6 +32,7 @@
 #include "TaskTest.h"
 #include "MyFLASH.h"
 #include "command.h"
+#include "bootloader.h"
 
 /* USER CODE END Includes */
 
@@ -104,6 +105,19 @@ int main(void)
   MX_CRC_Init();
   /* USER CODE BEGIN 2 */
 	U1BootLoader_Init();
+  if (Bootloader_WatchdogInit() == HAL_OK)
+  {
+    U1_Printf("[IWDG] 已启动，名义超时约5000 ms\r\n");
+    if (Bootloader_WasIwdgReset())
+    {
+      U1_Printf("[IWDG] 检测到上一次由独立看门狗复位\r\n");
+    }
+  }
+  else
+  {
+    U1_Printf("[IWDG] 配置更新超时，等待硬件复位\r\n");
+    Error_Handler();
+  }
   UART_circular_buffer_Init();
 
   U1_Printf("restart to bootloader mode and wait for command!");

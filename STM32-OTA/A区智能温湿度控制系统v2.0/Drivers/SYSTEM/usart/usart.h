@@ -69,6 +69,7 @@ void usart_init(uint32_t baudrate);             /* 串口初始化函数 */
 void USART2_Init(uint32_t baudrate);
 
 void USART2_DMA1_Init(void);
+HAL_StatusTypeDef USART2_StartReceiveIT(void);
 
 
 

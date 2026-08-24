@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "esp_log.h"
 #include "cJSON.h"
 #include "mqtt_client.h"
@@ -81,5 +82,12 @@ esp_err_t onenet_start(void);
  * @return 错误码
  */
 esp_err_t onenet_stop(void);
+
+/**
+ * @brief 查询当前OneNET MQTT连接状态。
+ * @param 无。
+ * @return true表示MQTT已连接，false表示尚未连接或已断开。
+ */
+bool onenet_is_connected(void);
 
 #endif

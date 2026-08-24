@@ -1,4 +1,5 @@
 #include "onenet_dm.h"
+#include "freertos/task.h"
 
 #define TAG "onenet_dm"
 
@@ -21,10 +22,13 @@ static uint8_t ws2812_blue = 0;
 
 //ws2812操作句柄
 static ws2812_strip_handle_t ws2812_handle;
+static TaskHandle_t s_onenet_update_task_handle = NULL;
+static TaskHandle_t s_property_report_task_handle = NULL;
 
 
 /*函数声明*/
 void oneNET_update_task(void* pvParameters);
+static void onenet_property_report_task(void *pvParameters);
 
 /**
  * 物模型数据初始化 (明亮度使用普通LED显示，RGB用WS2812显示)
@@ -66,7 +70,35 @@ void onenet_dm_init(void)
     //启用渐变功能，如果要调节占空比，必须启用这句
     ledc_fade_func_install(0);
 
-    xTaskCreate(oneNET_update_task,"oneNET_update_task",1024,NULL,5,NULL);/*更新线程开启*/
+    if (s_onenet_update_task_handle == NULL)
+    {
+        if (xTaskCreatePinnedToCore(oneNET_update_task,
+                                    "oneNET_update_task",
+                                    1024,
+                                    NULL,
+                                    5,
+                                    &s_onenet_update_task_handle,
+                                    0) != pdPASS)
+        {
+            s_onenet_update_task_handle = NULL;
+            ESP_LOGE(TAG, "物模型UART更新任务创建失败");
+        }
+    }
+
+    if (s_property_report_task_handle == NULL)
+    {
+        if (xTaskCreatePinnedToCore(onenet_property_report_task,
+                                    "property_report_task",
+                                    4096,
+                                    NULL,
+                                    5,
+                                    &s_property_report_task_handle,
+                                    0) != pdPASS)
+        {
+            s_property_report_task_handle = NULL;
+            ESP_LOGE(TAG, "物模型周期上报任务创建失败");
+        }
+    }
 }
 
 
@@ -245,6 +277,7 @@ void oneNET_update_task(void* pvParameters)
         // 检查队列是否已初始化
     if (uart_oneNET_data_queue == NULL) {
         ESP_LOGE(TAG, "uart_oneNET_data_queue not initialized");
+        vTaskDelete(NULL);
         return;
     }
 
@@ -280,4 +313,36 @@ void oneNET_update_task(void* pvParameters)
         
     }
     
+}
+
+/**
+ * @brief 周期上报OneNET物模型数据。
+ * @param pvParameters 未使用。
+ * @return 无；任务永久运行。
+ * @note 任务由物模型模块创建一次；MQTT断线期间只等待，不创建重复任务。
+ */
+static void onenet_property_report_task(void *pvParameters)
+{
+    (void)pvParameters;
+    ESP_LOGI(TAG, "Property report task started");
+
+    for (;;)
+    {
+        if (onenet_is_connected())
+        {
+            cJSON *property_js = onenet_property_upload_dm();
+            if (property_js != NULL)
+            {
+                char *data = cJSON_PrintUnformatted(property_js);
+                if (data != NULL)
+                {
+                    (void)onenet_post_property_data(data);
+                    cJSON_free(data);
+                }
+                cJSON_Delete(property_js);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }

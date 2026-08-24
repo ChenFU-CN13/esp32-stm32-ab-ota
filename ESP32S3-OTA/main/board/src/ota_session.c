@@ -124,6 +124,12 @@ esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path, 
             goto cleanup;
         }
         ESP_LOGI(TAG, "Step 1: STM32 acknowledged upgrade notification");
+
+        /* STM32 APP发出ACK后会立即系统复位。留出固定的启动缓冲，
+         * 避免0x03在Bootloader初始化USART2 DMA之前到达而丢失。 */
+        ESP_LOGI(TAG, "等待STM32重启进入Bootloader: %u ms",
+                 (unsigned int)SERIAL_HANDSHAKE_BOOT_DELAY_MS);
+        vTaskDelay(pdMS_TO_TICKS(SERIAL_HANDSHAKE_BOOT_DELAY_MS));
     }
     else
     {
@@ -134,6 +140,7 @@ esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path, 
     /* Step 2: 发送握手确认
      * 目的：确认握手成功，建立通信链路
      * 数据包：0x66 0x03 0xBB
+     * 超时：每500ms重发，最多8次，确保重发仍在STM32的5s握手窗口内
      */
     ESP_LOGI(TAG, "Step 2: Sending handshake confirm...");
     ret = send_handshake_confirm(uart_num);
@@ -148,7 +155,8 @@ esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path, 
      * 目的：通知STM32即将开始发送固件数据
      *       STM32收到此命令后会先擦除Flash，擦除完成后才返回ACK
      * 数据包：0x66 0x04 0xBB
-     * 注意：由于Flash擦除需要较长时间，此处超时设置为8秒
+     * 注意：由于备份和Flash擦除需要较长时间，此处单次等待设置为20秒；
+     *       超时后由上层结束旧会话，不再重复等待同一阶段。
      */
     ESP_LOGI(TAG, "Step 3: Sending start transmission command...");
     ret = send_start_transmission(uart_num);
@@ -158,7 +166,7 @@ esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path, 
         goto cleanup;
     }
     ESP_LOGI(TAG, "Step 3: STM32 ready for firmware transmission");
-    
+
     /*==================== 阶段2：信息交换 ====================*/
     
     /* Step 4: 发送固件信息（大小+版本号）
@@ -261,7 +269,8 @@ cleanup:
     {
         free(data_buffer);
     }
-    /* 传输失败退出前，先发ABORT让STM32重置回IDLE，保证下次重试时双端状态对齐 */
+    /* 传输失败退出前，先用有界等待发ABORT，尽量让STM32回到可收尾状态；
+     * STM32掉电时允许本次无应答，不能因此阻塞OTA任务。 */
     if (ret != ESP_OK)
     {
         send_abort(uart_num);
@@ -295,9 +304,6 @@ cleanup:
     
     return ret;
 }
-
-
-
 
 
 

@@ -2,6 +2,7 @@
 
 #include "./SYSTEM/sys/sys.h"
 #include "./SYSTEM/usart/usart.h"
+#include "uart2_comm.h"
 
 
 /* 如果使用os,则包括下面的头文件即可 */
@@ -115,6 +116,8 @@ UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
+static uint8_t s_usart2_rx_byte;
+
 void uart2_send_complete_CB(UART_HandleTypeDef *huart);
 
 
@@ -139,6 +142,17 @@ void USART2_Init(uint32_t baudrate)
 	  HAL_UART_RegisterCallback(&huart2,HAL_UART_TX_COMPLETE_CB_ID,uart2_send_complete_CB);//注册回调，不影响发送接收，用于做下一步处理
 	
 	
+}
+
+/**
+ * @brief 启动一次 USART2 单字节中断接收。
+ * @param 无。
+ * @return HAL_OK：接收已启动；其他值：HAL 当前不能启动接收。
+ * @note 接收完成回调必须再次调用本函数，才能持续接收后续字节流。
+ */
+HAL_StatusTypeDef USART2_StartReceiveIT(void)
+{
+    return HAL_UART_Receive_IT(&huart2, &s_usart2_rx_byte, 1U);
 }
 
 
@@ -316,16 +330,50 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         
         HAL_UART_Receive_IT(&g_uart1_handle, (uint8_t *)g_rx_buffer, RXBUFFERSIZE);
     }
+    else if (huart->Instance == USART2)
+    {
+        /* USART2 每次只接收一个字节：先交给环形缓冲区，再立刻挂起下一次单字节接收。 */
+        /* 中断中仅转存一个字节并重启接收，完整协议由任务解析。 */
+        UART2_Comm_RxByteFromISR(s_usart2_rx_byte);
+        (void)USART2_StartReceiveIT();
+    }
 
 }
 
+/**
+ * @brief HAL UART 错误回调：仅处理 USART2 的通讯模块恢复通知。
+ * @param huart 发生错误的 UART HAL 句柄。
+ * @return 无。
+ * @note UART1 原有逻辑不受影响；USART2 仅在 HAL 接收状态恢复 READY 后重启接收。
+ */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        UART2_Comm_RxErrorFromISR();
 
+        /* HAL结束本次接收后才允许重新启动，避免破坏仍在进行的接收。 */
+        if (huart->RxState == HAL_UART_STATE_READY)
+        {
+            (void)USART2_StartReceiveIT();
+        }
+    }
+}
+
+
+/**
+ * @brief USART2 DMA 发送完成注册回调。
+ * @param huart 完成发送的 UART HAL 句柄。
+ * @return 无。
+ * @note 回调只通知任务；OTA ACK 完成后的系统复位必须由任务上下文执行。
+ */
 void uart2_send_complete_CB(UART_HandleTypeDef *huart)
 {
 
 	if(huart->Instance == USART2)
 	{
-        g_uart2_tx_state = UART_TX_IDLE;// 发送完成，更新状态为空闲
+        /* DMA发送完成只通知通讯任务，复位等重操作不放在中断回调中。 */
+        UART2_Comm_TxCompleteFromISR();
 
 	}
 }

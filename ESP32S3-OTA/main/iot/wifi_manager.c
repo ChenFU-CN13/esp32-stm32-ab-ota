@@ -69,6 +69,8 @@ static void event_handler(void* arg, esp_event_base_t event_base,int32_t event_i
         {
             case IP_EVENT_STA_GOT_IP:           //只有获取到路由器分配的IP，才认为是连上了路由器
                 ESP_LOGI(TAG,"Get ip address");
+                /* 一次成功连接即结束本轮重试计数，避免累计断线6次后永久停止重连。 */
+                sta_connect_count = 0;
                 is_sta_connected = true;
                 if(wifi_state_cb)
                     wifi_state_cb(WIFI_STATE_CONNECTED);

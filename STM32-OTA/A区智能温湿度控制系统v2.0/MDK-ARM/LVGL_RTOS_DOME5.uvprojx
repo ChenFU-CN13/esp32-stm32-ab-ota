@@ -410,6 +410,16 @@
               <FilePath>../Core/Src/freertos.c</FilePath>
             </File>
             <File>
+              <FileName>uart2_ringbuf.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/uart2_ringbuf.c</FilePath>
+            </File>
+            <File>
+              <FileName>uart2_comm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/uart2_comm.c</FilePath>
+            </File>
+            <File>
               <FileName>DMA_LCD.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\DMA_LCD.c</FilePath>

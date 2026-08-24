@@ -19,6 +19,7 @@
 #include "gui_guider.h"
 #include "events_init.h"
 #include "APP_Tasks.h"
+#include "uart2_comm.h"
 /* USER CODE END Includes */
 
 
@@ -33,18 +34,10 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = osPriorityLow2,//10
 };
 
-/***************串口任务声明参数******************/
-static TaskHandle_t USART2_Transmit_TaskHand_t;
- UART_TxState_t g_uart2_tx_state = UART_TX_IDLE;
-QueueHandle_t xUART2_PacketQueue = NULL;	//专门存储打包后的数据包
-
-
 /* USER CODE BEGIN FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); 
-void USART2_Transmit_Task_create(void);
-void UART_Packet_Init(UART_Packet_t *packet, uint8_t type);
 /* USER CODE END FunctionPrototypes */
 
 
@@ -70,7 +63,7 @@ void MX_FREERTOS_Init(void) {
 	
 	AppTasks_Create();//APP传感器任务启动
 	
-	USART2_Transmit_Task_create();//串口通讯任务
+	UART2_Comm_Start();//USART2通讯任务：业务ACK和OTA通知统一在此处理
 	
   /* USER CODE END Init */
 		
@@ -100,6 +93,7 @@ void StartDefaultTask(void *argument)
   
 	/******************局部变量声明*******************/
 	sensor_Data_t recv_data = {0};
+	APP_Watchdog_Refresh();
 	
 	/******************注册回调事件*******************/
 	 
@@ -129,99 +123,10 @@ void StartDefaultTask(void *argument)
 		 
 		
 		lv_timer_handler(); /* 处理LVGL定时器和任务（必须周期性调用） */
+		/* 由现有LVGL主循环承担APP存活证明；任务卡死或调度失效时停止喂狗。 */
+		APP_Watchdog_Refresh();
 		osDelay(5);
 
   }
   /* USER CODE END StartDefaultTask */
-}
-
-
-
-/* ******************串口通讯任务************ */
-void USART2_Transmit_Task(void *pvParameters)
-{
-
-	
-	
-    UART_Msg_t msg;  // 接收所有类型的消息
-    UART_Packet_t tx_packet; //发送数据包
-
-	for(;;)
-    {
-		
-			if(xQueueReceive(xUART2_TxQueue,&msg,pdMS_TO_TICKS(10))==pdTRUE)
-			{
-				
-				switch(msg.type)  
-                {
-					
-					
-                   case MSG_TYPE_DHT11:          
-						UART_Packet_Init(&tx_packet, 0X01); // 发送湿度
-						tx_packet.data[0] = msg.data.dht11_data.humi;
-						xQueueSendToBack(xUART2_PacketQueue, &tx_packet, 0);
-				   
-						UART_Packet_Init(&tx_packet, 0X02); // 发送湿度
-						tx_packet.data[0] = msg.data.dht11_data.temp;
-						xQueueSendToBack(xUART2_PacketQueue, &tx_packet, 0);
-                     break;
-				   
-					case MSG_TYPE_LED:
-						UART_Packet_Init(&tx_packet, 0X03);
-						tx_packet.data[0] = msg.data.led_cmd;
-						xQueueSendToBack(xUART2_PacketQueue, &tx_packet, 0);
-						break;
-						
-					case MSG_TYPE_BUZZER:
-						UART_Packet_Init(&tx_packet, 0X04);
-						tx_packet.data[0] = msg.data.buzzer_cmd;
-						xQueueSendToBack(xUART2_PacketQueue, &tx_packet, 0);
-						break;
-				   
-				   
-                }
-
-
-			}
-			
-			if(g_uart2_tx_state == UART_TX_IDLE)	//UASRT是否空闲
-			{
-				UART_Packet_t tx_packet;
-				if(xQueueReceive(xUART2_PacketQueue, &tx_packet, 0) == pdTRUE)
-				{
-					g_uart2_tx_state = UART_TX_BUSY;//UASRT置位
-					HAL_UART_Transmit_DMA(&huart2, (uint8_t*)&tx_packet, sizeof(tx_packet));
-				}
-			}
-
-
-			osDelay(2); // 短暂延时，降低CPU占用
-    }
-	
-}
-
-
-void USART2_Transmit_Task_create(void)
-{
-	
-    
-    xUART2_PacketQueue = xQueueCreate(16, sizeof(UART_Packet_t));//发送数据队列
-    configASSERT(xUART2_PacketQueue != NULL);
-	
-
-	xTaskCreate(USART2_Transmit_Task,
-				"USART2_Transmit_Task",
-				128*2,
-				NULL,
-				3,
-				&USART2_Transmit_TaskHand_t
-				);
-}
-
-void UART_Packet_Init(UART_Packet_t *packet, uint8_t type)
-{
-	packet->header = 0X55;
-	packet->tail=0XBB;
-	packet->type = type;
-	memset(packet->data,0,sizeof(packet->data));
 }

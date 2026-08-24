@@ -59,6 +59,9 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+HAL_StatusTypeDef APP_Watchdog_Init(void);
+void APP_Watchdog_Refresh(void);
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

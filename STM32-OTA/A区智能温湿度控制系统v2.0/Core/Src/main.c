@@ -39,7 +39,50 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-	
+
+/* 与Bootloader保持相同IWDG配置，避免跳转交接时出现超时窗口突变。 */
+#define APP_IWDG_PRESCALER              4U
+#define APP_IWDG_RELOAD                 2499U
+#define APP_IWDG_UPDATE_TIMEOUT         100U
+
+/**
+ * @brief 初始化正式APP独立看门狗。
+ * @return HAL_OK-初始化成功；HAL_TIMEOUT-配置寄存器更新超时。
+ * @note 若由Bootloader跳转而来，本函数会接管已运行的IWDG；冷启动时则主动启动IWDG。
+ */
+HAL_StatusTypeDef APP_Watchdog_Init(void)
+{
+	uint32_t start_tick;
+
+	__HAL_DBGMCU_FREEZE_IWDG();
+	IWDG->KR = 0xCCCCU;
+	IWDG->KR = 0x5555U;
+	IWDG->PR = APP_IWDG_PRESCALER;
+	IWDG->RLR = APP_IWDG_RELOAD;
+
+	start_tick = HAL_GetTick();
+	while ((IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU)) != 0U)
+	{
+		if ((HAL_GetTick() - start_tick) >= APP_IWDG_UPDATE_TIMEOUT)
+		{
+			return HAL_TIMEOUT;
+		}
+	}
+
+	IWDG->KR = 0xAAAAU;
+	return HAL_OK;
+}
+
+/**
+ * @brief 刷新正式APP独立看门狗。
+ * @return 无。
+ * @note 写入重装载键不会在冷启动时自行启动IWDG，可安全用于Bootloader跳转早期接管。
+ */
+void APP_Watchdog_Refresh(void)
+{
+	IWDG->KR = 0xAAAAU;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -58,6 +101,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+		/* Bootloader跳转后IWDG仍在运行，先刷新再做时钟与外设初始化。 */
+		APP_Watchdog_Refresh();
 		SCB->VTOR = 0x08010000; // A区APP自己告诉CPU向量表起始地址
 	    __enable_irq(); // 关键：重新开启全局中断
 	/*当前STM32跳转到A区还应该 一开始发送版本号给ESP32，用于上报到onenet平台*/
@@ -66,27 +111,38 @@ int main(void)
 
   /* Configure the system clock */
   SystemClock_Config();
+	if (APP_Watchdog_Init() != HAL_OK)
+	{
+		Error_Handler();
+	}
 
  
 	MX_GPIO_Init();
+	APP_Watchdog_Refresh();
 
     
   delay_init(); 						
   usart_init(115200);//注意:这个是串口1 
 	USART2_DMA1_Init();
 	USART2_Init(115200);
+	APP_Watchdog_Refresh();
 	sram_init();
 	FAN_init();
+	APP_Watchdog_Refresh();
 
   
 	printf("============================= \r\n");
 	printf("enter A code is successfully! \r\n");
+  printf("调试:该固件版本为v1.0.16! \r\n");
+	printf("[IWDG] APP已接管，超时限制约5000 ms\r\n");
 	printf("============================= \r\n");
 
 	
   /* Init scheduler */
   osKernelInitialize();  /* Call init function for freertos objects (in freertos.c) */
+	APP_Watchdog_Refresh();
   MX_FREERTOS_Init();
+	APP_Watchdog_Refresh();
 	
   /* Start scheduler */
   osKernelStart();
@@ -162,7 +218,16 @@ void SystemClock_Config(void)
  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance == TIM6)
+    /*
+     * 工程将 TIM7 配置为 HAL 的 1 ms 时基。
+     * HAL_GetTick()、UART ACK 超时和 HAL 内部超时都依赖此处递增 uwTick。
+     * FreeRTOS 使用 SysTick 维护任务节拍，因此不能依赖 SysTick 来驱动 HAL 时基。
+     */
+    if (htim->Instance == TIM7)
+    {
+        HAL_IncTick();
+    }
+    else if (htim->Instance == TIM6)
     {
 //        lv_tick_inc(1);                 
     }

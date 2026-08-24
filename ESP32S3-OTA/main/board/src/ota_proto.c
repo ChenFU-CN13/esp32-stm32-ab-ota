@@ -13,6 +13,50 @@
 
 static const char *TAG = "ota_proto";
 volatile uint8_t g_last_nack_err = 0;       /* NACK错误标志位 */
+volatile uint8_t g_start_transmission_timeout = 0;
+
+/**
+ * @brief 获取 OTA 简单命令的人类可读名称
+ * @param cmd 协议命令字
+ * @return 命令名称字符串
+ * @note 仅用于任务上下文日志，不参与协议判定。
+ */
+static const char *OTA_GetCommandName(uint8_t cmd)
+{
+    switch (cmd)
+    {
+        case SERIAL_CMD_UPGRADE_NOTIFY: return "upgrade notify";
+        case SERIAL_CMD_CONFIRM:        return "handshake confirm";
+        case SERIAL_CMD_START_TRANS:    return "start transfer";
+        case SERIAL_CMD_FW_INFO:        return "firmware info";
+        case SERIAL_CMD_UPGRADE_END:    return "upgrade end";
+        case SERIAL_CMD_ABORT:          return "abort";
+        case SERIAL_CMD_VERSION_REQUEST:return "version request";
+        default:                        return "firmware data/unknown";
+    }
+}
+
+/**
+ * @brief 获取 NACK 错误码的可读说明
+ * @param err_code STM32 返回的 NACK 错误码
+ * @return 错误说明字符串
+ * @note 说明与 ota_proto.h 中的 NACK_ERR_xxx 常量保持一一对应。
+ */
+static const char *OTA_GetNackReason(uint8_t err_code)
+{
+    switch (err_code)
+    {
+        case NACK_ERR_FRAME_CRC:      return "frame CRC error, retryable";
+        case NACK_ERR_STATE_MISMATCH: return "state mismatch, abort then retry";
+        case NACK_ERR_BAD_LENGTH:     return "invalid frame length, retryable";
+        case NACK_ERR_FLASH_ERROR:    return "Flash/storage error, unrecoverable";
+        case NACK_ERR_FW_CRC_FAIL:    return "firmware CRC error, unrecoverable";
+        case NACK_ERR_UNKNOWN_CMD:    return "unknown command";
+        case NACK_ERR_PACKET_SEQ:     return "packet sequence error, retryable";
+        case NACK_ERR_PREVIOUS_ROLLBACK: return "previous OTA rolled back, close this session";
+        default:                      return "undefined NACK code";
+    }
+}
 
 /*============================================================================
  *                       固件传输协议实现函数
@@ -35,25 +79,40 @@ volatile uint8_t g_last_nack_err = 0;       /* NACK错误标志位 */
  *       这种协议虽然效率较低，但实现简单且可靠性高，
  *       适合固件传输这种对可靠性要求极高的场景。
  */
-esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size_t len, uint8_t expected_cmd)
+static esp_err_t send_packet_with_retry_timeout_limit(uart_port_t uart_num,
+                                                       const uint8_t *data,
+                                                       size_t len,
+                                                       uint8_t expected_cmd,
+                                                       uint32_t response_timeout_ms,
+                                                       uint8_t max_retry_count)
 {
     uint8_t recv_buffer[8] = {0};
     int retry_count = 0;
+    uint8_t tx_cmd = data[1];
 
      g_last_nack_err = 0;    /* 每次进入先清除上次错误码 */
 
 
-    while (retry_count < SERIAL_MAX_RETRY_COUNT) 
+    if (max_retry_count == 0U)
+    {
+        max_retry_count = 1U;
+    }
+
+    while (retry_count < max_retry_count)
     {
         /* 清空接收缓冲区，避免上次残留数据干扰 */
         uart_flush_input(uart_num);
 
         /* 发送数据包 */
         uart_write_bytes(uart_num,data,len);
-        ESP_LOGI(TAG, "Sent packet, waiting for ACK (cmd=0x%02X), retry=%d", expected_cmd, retry_count);
+        if (tx_cmd != SERIAL_CMD_FW_DATA)
+        {
+            ESP_LOGI(TAG, "[OTA][TX] 66 %02X BB (%s), waiting for ACK, retry=%d",
+                     tx_cmd, OTA_GetCommandName(tx_cmd), retry_count);
+        }
 
         /* 先读3字节：ACK是3字节(66 02 BB)，NACK前3字节是(66 0A err)，读3字节就可以辨认出是正常ACK，还是NACK了 */
-        int recv_len  = uart_read_bytes(uart_num,recv_buffer,3,pdMS_TO_TICKS(SERIAL_TIMEOUT_MS));
+        int recv_len  = uart_read_bytes(uart_num,recv_buffer,3,pdMS_TO_TICKS(response_timeout_ms));
 
         /* 情况1：收到期望的ACK，成功 */
         if (recv_len == 3 && 
@@ -61,7 +120,11 @@ esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size
             recv_buffer[1] == expected_cmd &&
             recv_buffer[2] == SERIAL_PACKET_TAIL)
         {
-            ESP_LOGI(TAG,"Received expected ACK");
+            if (tx_cmd != SERIAL_CMD_FW_DATA)
+            {
+                ESP_LOGI(TAG, "[OTA][RX] 66 02 BB ACK for 0x%02X (%s)",
+                         tx_cmd, OTA_GetCommandName(tx_cmd));
+            }
             return ESP_OK; // 成功直接返回！
         }
 
@@ -78,7 +141,9 @@ esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size
             if (n == 1 && recv_buffer[3] == SERIAL_PACKET_TAIL)
             {
                 g_last_nack_err = err_code;
-                ESP_LOGE(TAG, "Received NACK, err_code=0x%02X", err_code);
+                ESP_LOGE(TAG, "[OTA][RX] NACK for 0x%02X (%s): error=0x%02X, %s",
+                         tx_cmd, OTA_GetCommandName(tx_cmd), err_code,
+                         OTA_GetNackReason(err_code));
 
                 /* 可恢复错误(传输干扰)：重发同一帧可能恢复，继续重试 */
                 if (err_code == NACK_ERR_FRAME_CRC ||
@@ -104,7 +169,7 @@ esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size
 
 
         /* 情况3：超时或垃圾数据：可能丢包，重试 */
-        ESP_LOGW(TAG, "Invalid response or timeout, retry %d/%d", retry_count + 1, SERIAL_MAX_RETRY_COUNT);
+        ESP_LOGW(TAG, "Invalid response or timeout, retry %d/%d", retry_count + 1, max_retry_count);
         retry_count++;
 
 
@@ -119,6 +184,24 @@ esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size
 
 
 
+}
+
+
+static esp_err_t send_packet_with_retry_timeout(uart_port_t uart_num,
+                                                 const uint8_t *data,
+                                                 size_t len,
+                                                 uint8_t expected_cmd,
+                                                 uint32_t response_timeout_ms)
+{
+    return send_packet_with_retry_timeout_limit(uart_num, data, len, expected_cmd,
+                                                response_timeout_ms,
+                                                SERIAL_MAX_RETRY_COUNT);
+}
+
+
+esp_err_t send_packet_with_retry(uart_port_t uart_num, const uint8_t *data, size_t len, uint8_t expected_cmd)
+{
+    return send_packet_with_retry_timeout(uart_num, data, len, expected_cmd, SERIAL_TIMEOUT_MS);
 }
 
 
@@ -137,9 +220,47 @@ esp_err_t send_abort(uart_port_t uart_num)
     uint8_t saved_nack = g_last_nack_err;   /* 保存，防止被本次调用清掉 */
     esp_err_t ret;
     ESP_LOGW(TAG, "Sending ABORT command...");
-    ret = send_packet_with_retry(uart_num, packet, 3, SERIAL_CMD_ACK);
+    /* STM32掉电时不应在这里再进行5×8秒的无意义等待。 */
+    ret = send_packet_with_retry_timeout_limit(uart_num, packet, 3, SERIAL_CMD_ACK,
+                                               SERIAL_ABORT_TIMEOUT_MS,
+                                               SERIAL_ABORT_MAX_RETRY);
     g_last_nack_err = saved_nack;           /* 恢复，让上层日志打印真实错误码 */
     return ret;
+}
+
+/**
+ * @brief 请求运行中的STM32 APP重新上报当前版本。
+ * @param uart_num 串口号。
+ * @return ESP_OK表示查询帧已完整写入UART发送缓冲区，其他值表示发送失败。
+ * @note 查询响应仍使用现有55 05版本帧，不能在这里直接读取UART，否则会和常驻接收任务争抢字节。
+ */
+esp_err_t send_version_request(uart_port_t uart_num)
+{
+    const uint8_t packet[3] = {
+        SERIAL_PACKET_HEAD,
+        SERIAL_CMD_VERSION_REQUEST,
+        SERIAL_PACKET_TAIL
+    };
+    int written_length;
+
+    if (g_ota_uart_busy)
+    {
+        ESP_LOGW(TAG, "[VERSION][TX] OTA owns UART, request rejected");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    written_length = uart_write_bytes(uart_num,
+                                      (const char *)packet,
+                                      sizeof(packet));
+    if (written_length != (int)sizeof(packet))
+    {
+        ESP_LOGE(TAG, "[VERSION][TX] request write failed, length=%d",
+                 written_length);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "[VERSION][TX] 66 09 BB request current APP version");
+    return ESP_OK;
 }
 
 
@@ -179,7 +300,10 @@ esp_err_t send_handshake_notify(uart_port_t uart_num)
 esp_err_t send_handshake_confirm(uart_port_t uart_num)
 {
     uint8_t packet[3] = {SERIAL_PACKET_HEAD, SERIAL_CMD_CONFIRM, SERIAL_PACKET_TAIL};
-    return send_packet_with_retry(uart_num, packet, 3, SERIAL_CMD_ACK);
+    /* Bootloader只等待二次握手5秒，不能沿用普通命令的8秒单次超时。 */
+    return send_packet_with_retry_timeout_limit(uart_num, packet, 3, SERIAL_CMD_ACK,
+                                                SERIAL_HANDSHAKE_TIMEOUT_MS,
+                                                SERIAL_HANDSHAKE_MAX_RETRY);
 }
 
 /**
@@ -389,5 +513,16 @@ esp_err_t send_upgrade_end(uart_port_t uart_num)
 esp_err_t send_start_transmission(uart_port_t uart_num)
 {
     uint8_t packet[3] = {SERIAL_PACKET_HEAD, SERIAL_CMD_START_TRANS, SERIAL_PACKET_TAIL};
-    return send_packet_with_retry(uart_num, packet, 3, SERIAL_CMD_ACK);
+    esp_err_t ret;
+
+    g_start_transmission_timeout = 0U;
+    ret = send_packet_with_retry_timeout_limit(uart_num, packet, 3, SERIAL_CMD_ACK,
+                                               SERIAL_START_TRANS_TIMEOUT_MS,
+                                               SERIAL_START_TRANS_MAX_RETRY);
+    if (ret != ESP_OK && g_last_nack_err == 0U)
+    {
+        /* 没有收到任何NACK，说明STM32在整个备份/擦除窗口内无响应。 */
+        g_start_transmission_timeout = 1U;
+    }
+    return ret;
 }

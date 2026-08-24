@@ -14,10 +14,67 @@
 /* 跳转目标函数指针变量：在 Load_A 中赋值为 A 区 APP 的复位向量 */
 load_a LOAD_A;
 
+/* IWDG由32kHz标称LSI驱动：/64、Reload=2499时名义约5秒。
+ * STM32F407数据手册给出的LSI范围为17~47kHz，实际约3.4~9.4秒。 */
+#define BOOTLOADER_IWDG_PRESCALER       4U
+#define BOOTLOADER_IWDG_RELOAD          2499U
+#define BOOTLOADER_IWDG_UPDATE_TIMEOUT  100U
+
+static uint8_t s_iwdg_reset_detected = 0U;
+
 
 /*============================================================================*/
 /*                          底层硬件操作函数                                   */
 /*============================================================================*/
+
+/**
+ * @brief 初始化Bootloader独立看门狗。
+ * @return HAL_OK-初始化成功；HAL_TIMEOUT-配置寄存器更新超时。
+ * @note IWDG启动后不能由软件关闭，A区APP必须在启动早期接管喂狗。
+ */
+HAL_StatusTypeDef Bootloader_WatchdogInit(void)
+{
+	uint32_t start_tick;
+
+	s_iwdg_reset_detected = (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET) ? 1U : 0U;
+	__HAL_RCC_CLEAR_RESET_FLAGS();
+	__HAL_DBGMCU_FREEZE_IWDG();
+
+	IWDG->KR = 0xCCCCU;
+	IWDG->KR = 0x5555U;
+	IWDG->PR = BOOTLOADER_IWDG_PRESCALER;
+	IWDG->RLR = BOOTLOADER_IWDG_RELOAD;
+
+	start_tick = HAL_GetTick();
+	while ((IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU)) != 0U)
+	{
+		if ((HAL_GetTick() - start_tick) >= BOOTLOADER_IWDG_UPDATE_TIMEOUT)
+		{
+			return HAL_TIMEOUT;
+		}
+	}
+
+	IWDG->KR = 0xAAAAU;
+	return HAL_OK;
+}
+
+/**
+ * @brief 刷新独立看门狗计数器。
+ * @return 无。
+ */
+void Bootloader_WatchdogRefresh(void)
+{
+	IWDG->KR = 0xAAAAU;
+}
+
+/**
+ * @brief 查询本次启动是否由IWDG复位触发。
+ * @return 1-是IWDG复位；0-不是IWDG复位。
+ */
+uint8_t Bootloader_WasIwdgReset(void)
+{
+	return s_iwdg_reset_detected;
+}
 
 /**
  * @brief SP指针赋值函数（内联汇编）
@@ -88,6 +145,7 @@ void BootLoader_Clear(void)
  */
 void Load_A(uint32_t address)
 {
+    Bootloader_WatchdogRefresh();
     U1_Printf("A区首地址: 0x%08X\r\n", address);
     U1_Printf("栈指针(地址+0): 0x%08X\r\n", *(uint32_t*)address);
     U1_Printf("复位向量(地址+4): 0x%08X\r\n", *(uint32_t*)(address+4));
@@ -114,5 +172,3 @@ void Load_A(uint32_t address)
 		U1_Printf("===========================================================\r\n");
 	}
 }
-
-

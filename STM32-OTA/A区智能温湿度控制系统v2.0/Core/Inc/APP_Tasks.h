@@ -32,12 +32,6 @@ typedef struct {
     uint8_t humi;
 } sensor_Data_t;		//添加新的传感器数据到这个结构体，蜂鸣器 LED不属于
 
-// 串口发送状态枚举
-typedef enum {
-    UART_TX_IDLE,       // 空闲可发送
-    UART_TX_BUSY        // 正在发送
-} UART_TxState_t;
-
 // LED控制指令枚举
 typedef enum {
     LED_CMD_OFF = 0,  // 关闭
@@ -99,8 +93,6 @@ typedef struct {
 
 
 extern sensor_Data_t g_dht11_data;	//串口2发送数据
-extern UART_TxState_t g_uart2_tx_state;	//串口状态
-
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

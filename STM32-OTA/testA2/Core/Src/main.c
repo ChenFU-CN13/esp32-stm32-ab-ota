@@ -75,8 +75,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-	SCB->VTOR = 0x08010000; // A区APP自己告诉CPU向量表起始地�?
-	    __enable_irq(); // 关键：重新开启全�?中断
+	SCB->VTOR = 0x08010000; // A区APP自己告诉CPU向量表起始地�?
+	    __enable_irq(); // 关键：重新开启全�?中断
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -92,7 +92,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-	U1BootLoader_Init();	//串口1打印初始�?
+	U1BootLoader_Init();	//串口1打印初始�?
 	test_IDLE_UART1();
 	U1_Printf(" 进入 APP程序,可接收重启命令 ");
 	
@@ -103,7 +103,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	testtask();
+	  testtask();
 	  
     /* USER CODE BEGIN 3 */
 	  
