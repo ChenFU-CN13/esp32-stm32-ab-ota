@@ -21,6 +21,11 @@ HAL_StatusTypeDef EP24C_ReadBytes(uint16_t memAddress,
 								uint16_t buffer_Len_Max);
 HAL_StatusTypeDef EP24C_WriteInOnePage(uint16_t memAddress, uint8_t *pBuffer, uint16_t bufferLen);
 HAL_StatusTypeDef EP24C_WriteLongData(uint16_t memAddress, uint8_t *pBuffer, uint16_t bufferLen);
+/**
+ * @brief   安全写入任意长度数据，自动按AT24C02页边界拆分
+ * @note    不允许越过256B存储空间；每次页写完成后等待内部写周期。
+ */
+HAL_StatusTypeDef EP24C_WriteBytes(uint16_t memAddress, const uint8_t *pBuffer, uint16_t bufferLen);
  
 void test_AT24C02(void);
 

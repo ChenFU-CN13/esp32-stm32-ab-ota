@@ -35,11 +35,38 @@
 
 void vMQTT_ONENET_Task(void* pvParameters)
 {
+        esp_err_t nvs_ret;
 
-        nvs_flash_init();
+        (void)pvParameters;
+        nvs_ret = nvs_flash_init();
+        if ((nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES) ||
+            (nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND))
+        {
+            /* 仅在NVS页耗尽或格式版本不兼容时擦除并重建，避免Wi-Fi初始化继续使用坏状态。 */
+            ESP_LOGW(TAG, "NVS需要重建: %s", esp_err_to_name(nvs_ret));
+            nvs_ret = nvs_flash_erase();
+            if (nvs_ret == ESP_OK)
+            {
+                nvs_ret = nvs_flash_init();
+            }
+        }
+        if (nvs_ret != ESP_OK)
+        {
+            ESP_LOGE(TAG, "NVS初始化失败，停止Wi-Fi/OneNET启动: %s",
+                     esp_err_to_name(nvs_ret));
+            vTaskDelete(NULL);
+            return;
+        }
+
         //onenet物模型数据初始化
         onenet_dm_init();//包含物模型数据传输任务
         wifi_ev = xEventGroupCreate();
+        if (wifi_ev == NULL)
+        {
+            ESP_LOGE(TAG, "Wi-Fi事件组创建失败");
+            vTaskDelete(NULL);
+            return;
+        }
         wifi_manager_init(wifi_state_callback);
         wifi_manager_connect(DEFAULT_SSID,DEFAULT_PASSWORD);
 
@@ -60,11 +87,28 @@ void vMQTT_ONENET_Task(void* pvParameters)
 
 void app_main(void)
 {
+    BaseType_t task_ret;
 
     #if 1
-        
+        /* 先建立STM32版本同步状态，再启动UART，避免APP上电即上报时丢失事件。 */
+        if (onenet_ota_init() != ESP_OK)
+        {
+            ESP_LOGE(TAG, "OTA Manager初始化失败");
+            return;
+        }
+
         UART_config_init_AND_UART_recive_TASK(&myuart,UART_NUM_1);/*开启串口接收任务，已包含串口缓冲区任务创建*/
-        xTaskCreate(vMQTT_ONENET_Task,"vMQTT_ONENET_Task",4096,NULL,5,NULL);
+        task_ret = xTaskCreatePinnedToCore(vMQTT_ONENET_Task,
+                                           "vMQTT_ONENET_Task",
+                                           4096,
+                                           NULL,
+                                           5,
+                                           NULL,
+                                           0);
+        if (task_ret != pdPASS)
+        {
+            ESP_LOGE(TAG, "Wi-Fi/OneNET启动任务创建失败");
+        }
 
     #endif
 }

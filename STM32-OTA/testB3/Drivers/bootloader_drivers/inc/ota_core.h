@@ -55,6 +55,8 @@ typedef enum {
     OTA_STATE_WAIT_END,
     OTA_STATE_UPGRADE_SUCCESS,
     OTA_STATE_UPGRADE_FAILED,
+    OTA_STATE_ROLLBACK_PENDING,
+    OTA_STATE_RECOVERY_FAILED,
     OTA_STATE_JUMP_TO_APP
 } OTA_State_t;
 
@@ -133,4 +135,3 @@ void OTA_RunUpgradeProcess(void);
 
 
 #endif
-

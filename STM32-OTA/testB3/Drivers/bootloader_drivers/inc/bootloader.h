@@ -100,10 +100,30 @@ void BootLoader_Clear(void);
  */
 void Load_A(uint32_t address);
 
+/**
+ * @brief 初始化Bootloader独立看门狗。
+ * @return HAL_OK-初始化成功；HAL_TIMEOUT-配置寄存器更新超时。
+ * @note 名义超时约5秒；IWDG启动后只能由复位停止，跳转APP后必须继续喂狗。
+ */
+HAL_StatusTypeDef Bootloader_WatchdogInit(void);
+
+/**
+ * @brief 刷新独立看门狗计数器。
+ * @return 无。
+ * @note 可在IWDG尚未启动时调用，不会因此启动IWDG。
+ */
+void Bootloader_WatchdogRefresh(void);
+
+/**
+ * @brief 查询本次启动是否由IWDG复位触发。
+ * @return 1-是IWDG复位；0-不是IWDG复位。
+ * @note 结果在Bootloader_WatchdogInit()中锁存，随后统一清除RCC复位标志。
+ */
+uint8_t Bootloader_WasIwdgReset(void);
+
 
 
 #endif
-
 
 
 

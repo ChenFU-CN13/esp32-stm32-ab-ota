@@ -1,4 +1,5 @@
 #include "MyFLASH.h"
+#include "bootloader.h"
  
  
 /**
@@ -72,6 +73,7 @@ HAL_StatusTypeDef MyFlash_EraseSectors(uint8_t start_sector, uint8_t num_sectors
     HAL_StatusTypeDef status;
     FLASH_EraseInitTypeDef erase_init;
     uint32_t sector_error = 0;
+    uint8_t sector;
  
     // 1. 参数合法性校验
     if (start_sector > 11 || num_sectors == 0 || (start_sector + num_sectors) > 12) {
@@ -88,14 +90,21 @@ HAL_StatusTypeDef MyFlash_EraseSectors(uint8_t start_sector, uint8_t num_sectors
     erase_init.TypeErase    = FLASH_TYPEERASE_SECTORS;  // 按扇区擦除
     erase_init.Banks        = FLASH_BANK_1;            // F407 单 Bank
     erase_init.Sector       = start_sector;            // 起始扇区
-    erase_init.NbSectors    = num_sectors;             // 擦除扇区数量
+    erase_init.NbSectors    = 1;                       // 逐扇区擦除，扇区间允许喂狗
     erase_init.VoltageRange = FLASH_VOLTAGE_RANGE_3;   // 电压范围 2.7V~3.6V
  
-    // 4. 执行擦除
-    status = HAL_FLASHEx_Erase(&erase_init, &sector_error);
-    if (status != HAL_OK) {
-        // 可在此记录出错扇区（sector_error）
-         U1_Printf("擦除失败，错误扇区：%lu\r\n", sector_error);
+    // 4. 逐扇区执行擦除。一次擦除8个扇区会连续阻塞约7秒，无法安全喂狗。
+    status = HAL_OK;
+    for (sector = start_sector; sector < (uint8_t)(start_sector + num_sectors); sector++) {
+        erase_init.Sector = sector;
+        sector_error = 0xFFFFFFFFU;
+        Bootloader_WatchdogRefresh();
+        status = HAL_FLASHEx_Erase(&erase_init, &sector_error);
+        Bootloader_WatchdogRefresh();
+        if (status != HAL_OK) {
+            U1_Printf("擦除失败，错误扇区：%lu\r\n", sector_error);
+            break;
+        }
     }
  
     // 5. 重新锁定 Flash

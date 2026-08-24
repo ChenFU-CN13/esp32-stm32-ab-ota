@@ -11,7 +11,6 @@
 
 #include "TaskTest.h"
 #include "ota_core.h"
-#include "command.h"
 
 
 /*============================================================================*/
@@ -47,7 +46,7 @@ void Task_While(void)
  * @brief 主任务初始化函数
  *
  * @details 在main函数中，外设初始化后调用
- *          初始化OTA上下文和串口环形缓冲区
+ *          只初始化OTA上下文和持久化恢复状态
  *
  * @note 调用示例:
  *   int main(void) {
@@ -66,5 +65,7 @@ void Task_While(void)
 void Task_Main(void)
 {
 	OTA_Init();
-	UART_circular_buffer_Init();
+	/* USART2 DMA环形缓冲区已在main.c中启动。
+	 * OTA_Init()可能执行EEPROM检查和镜像CRC，此处不能再次初始化，
+	 * 否则会清空启动期间已收到的二次握手帧。 */
 }

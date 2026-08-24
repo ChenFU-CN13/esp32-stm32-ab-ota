@@ -1,4 +1,5 @@
 #include "W25Q128.h"
+#include "bootloader.h"
 
 
 
@@ -90,6 +91,7 @@ HAL_StatusTypeDef W25Q128_WaitIdle(void)
 
 	while(W25Q128_ReadBusy())
 	{
+		Bootloader_WatchdogRefresh();
 		HAL_Delay(1);
 		TIMEOUT++;
 		if(TIMEOUT > 5000)

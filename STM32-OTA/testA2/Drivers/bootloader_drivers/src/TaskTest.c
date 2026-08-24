@@ -18,9 +18,10 @@ void testtask(void)
         {
            case 0X01:
 			   
+				U1_Printf("收到上位机数据帧：66 01 BB，升级通知，回复ACK后重启到Bootloader\r\n");
 			   HAL_UART_Transmit(&UART_port,uart2_ACK,sizeof(uart2_ACK),100);
 			   memset(uart2_buffer,0,sizeof(uart2_buffer));
-				U1_Printf("第一次握手成功 \r\n");
+				U1_Printf("已回复ACK：66 02 BB，准备重启到Bootloader\r\n");
 				HAL_NVIC_SystemReset();
              break;
         }

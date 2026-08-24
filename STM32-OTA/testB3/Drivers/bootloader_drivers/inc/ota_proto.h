@@ -61,6 +61,7 @@
 
 
 /* NACK帧格式: | 0x66 | 0x0A | err_code | 0xBB | 共4字节 */
+#define OTA_NACK_PREVIOUS_ROLLBACK      0x08        /* STM32已恢复旧镜像，要求结束上一轮会话 */
 #define OTA_NACK_FRAME_LEN             4
 
 
@@ -90,6 +91,11 @@
 #define OTA_DATA_FRAME_MAX_LEN          (OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_PAYLOAD_LEN + OTA_DATA_FRAME_TAIL_LEN)
 
 #define OTA_VERSION_LEN                 8
+
+#define OTA_WAIT_START_TIMEOUT_MS       15000U
+#define OTA_WAIT_INFO_TIMEOUT_MS        15000U
+#define OTA_WAIT_DATA_TIMEOUT_MS        15000U
+#define OTA_WAIT_END_TIMEOUT_MS         10000U
 
 /**
  * @brief 超时和重试配置
@@ -198,4 +204,3 @@ uint8_t OTA_ParseDataFrame(uint8_t *data, uint16_t len, OTA_DataFrame_t *frame);
 
 
 #endif
-

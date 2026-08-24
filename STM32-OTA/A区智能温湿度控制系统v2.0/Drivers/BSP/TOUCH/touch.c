@@ -311,7 +311,7 @@ static uint8_t tp_scan(uint8_t mode)
 /* TP_SAVE_ADDR_BASE定义触摸屏校准参数保存在EEPROM里面的位置(起始地址)
  * 占用空间 : 13字节.
  */
-#define TP_SAVE_ADDR_BASE   40
+#define TP_SAVE_ADDR_BASE   192
 
 /**
  * @brief       保存校准参数

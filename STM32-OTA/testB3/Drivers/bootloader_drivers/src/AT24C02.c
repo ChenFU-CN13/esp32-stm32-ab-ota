@@ -116,6 +116,59 @@ HAL_StatusTypeDef EP24C_WriteLongData(uint16_t memAddress, uint8_t *pBuffer, uin
 	return result;
 }
 
+/**
+ * @brief   安全写入任意长度数据，自动按AT24C02实际页边界拆分
+ * @param   memAddress 起始地址
+ * @param   pBuffer    源数据，不能为空
+ * @param   bufferLen  写入长度，允许为0
+ * @retval  HAL_OK-成功；HAL_ERROR-参数或越界错误；其余为I2C错误
+ *
+ * @note    旧EP24C_WriteLongData()每次固定推进8字节，只适用于页对齐地址。
+ *          本函数按“当前页剩余字节数”切分，因此可安全写入任意起始地址。
+ */
+HAL_StatusTypeDef EP24C_WriteBytes(uint16_t memAddress, const uint8_t *pBuffer, uint16_t bufferLen)
+{
+	HAL_StatusTypeDef status;
+	uint16_t page_remaining;
+	uint16_t write_len;
+
+	if ((pBuffer == NULL && bufferLen != 0U) || memAddress >= MEM_SIZE_24CXX)
+	{
+		return HAL_ERROR;
+	}
+
+	if (bufferLen == 0U)
+	{
+		return HAL_OK;
+	}
+
+	if (bufferLen > (MEM_SIZE_24CXX - memAddress))
+	{
+		return HAL_ERROR;
+	}
+
+	while (bufferLen > 0U)
+	{
+		page_remaining = PAGE_SIZE_24CXX - (memAddress % PAGE_SIZE_24CXX);
+		write_len = (bufferLen < page_remaining) ? bufferLen : page_remaining;
+
+		status = HAL_I2C_Mem_Write(&I2C_HANDLE, DEV_ADDR_24CXX, memAddress,
+				EP24C_MEMADD_SIZE, (uint8_t *)pBuffer, write_len, EP24C_TIMEOUT);
+		if (status != HAL_OK)
+		{
+			return status;
+		}
+
+		/* AT24C02内部写周期最大值由现有驱动统一采用5ms。 */
+		HAL_Delay(5);
+		memAddress += write_len;
+		pBuffer += write_len;
+		bufferLen -= write_len;
+	}
+
+	return HAL_OK;
+}
+
 
 
 
