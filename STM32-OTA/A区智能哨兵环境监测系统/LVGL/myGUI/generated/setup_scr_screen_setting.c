@@ -497,7 +497,7 @@ void setup_scr_screen_setting(lv_ui *ui)
     lv_obj_t * screen_setting_win_Version_title = lv_win_add_title(ui->screen_setting_win_Version, "Version Information");
     ui->screen_setting_win_Version_item0 = lv_win_add_btn(ui->screen_setting_win_Version, LV_SYMBOL_CLOSE, 40);
     lv_obj_t *screen_setting_win_Version_label = lv_label_create(lv_win_get_content(ui->screen_setting_win_Version));
-    lv_label_set_text(screen_setting_win_Version_label, "verison1.0");
+    lv_label_set_text(screen_setting_win_Version_label, "v2.0.0");
     lv_obj_set_scrollbar_mode(lv_win_get_content(ui->screen_setting_win_Version), LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_pos(ui->screen_setting_win_Version, 246, 144);
     lv_obj_set_size(ui->screen_setting_win_Version, 282, 146);

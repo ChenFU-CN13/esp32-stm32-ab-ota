@@ -3,6 +3,7 @@
 
 #include "driver/uart.h"
 #include "freertos/queue.h"
+#include "esp_err.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -21,7 +22,7 @@ typedef struct
 /*oneNET获取数据更新结构体*/
 typedef struct
 {
-    uint8_t type;       /* 数据类别：0x01湿度/0x02温度/0x03灯/0x04蜂鸣器 */
+    uint8_t type;       /* 0x01湿度/0x02温度/0x03灯/0x04报警/0x06烟雾/0x07光照/0x08风扇 */
     uint8_t value[3];   /* 数据值：最多3字节 */
 } uart_oneNET_data_t;
 
@@ -36,5 +37,13 @@ extern volatile bool g_ota_uart_busy;      /* OTA传输期间串口归OTA任务�
  */
 void UART_config_init_AND_UART_recive_TASK(uart_param_config_t *uart_param,
                                         uart_port_t uart_num);
+
+/**
+ * @brief 向 STM32 发送 OneNET 本地连接心跳。
+ * @param online true=OneNET在线，false=离线。
+ * @return ESP_OK=完整写入8字节；ESP_ERR_INVALID_STATE=UART未初始化或OTA独占；ESP_FAIL=写入失败。
+ * @note 帧格式为 55 0A status 00 00 00 00 BB，不进入 OneNET 属性上报。
+ */
+esp_err_t uart_send_business_heartbeat(bool online);
 
 #endif

@@ -9,6 +9,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "fan_pwm.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -37,23 +38,12 @@ extern "C" {
 /******************************************************************************************/
 /* DHT11 引脚 定义 */
 
-#define FAN_PORT                  		GPIOG
-#define FAN_GPIO_PIN_1                   GPIO_PIN_14
-#define FAN_GPIO_PIN_2                   GPIO_PIN_15
-#define FAN_GPIO_CLK_ENABLE()          do{ __HAL_RCC_GPIOG_CLK_ENABLE(); }while(0)     /* PG口时钟使能 */
-
-/******************************************************************************************/
-
-/* IO操作函数 */
-#define FAN_ON()						do{\
-											HAL_GPIO_WritePin(FAN_PORT,FAN_GPIO_PIN_1|FAN_GPIO_PIN_2,GPIO_PIN_SET);}while(0)
-
-#define FAN_OFF()						do{\
-											HAL_GPIO_WritePin(FAN_PORT,FAN_GPIO_PIN_1|FAN_GPIO_PIN_2,GPIO_PIN_RESET);}while(0)										
+#define FAN_ON()    do { FAN_PWM_SetDuty(1U, 100U); FAN_PWM_SetDuty(2U, 100U); } while (0)
+#define FAN_OFF()   do { FAN_PWM_SetDuty(1U, 0U); FAN_PWM_SetDuty(2U, 0U); } while (0)
 
 /********模块函数**********/											
 /**
- * @brief       初始化风扇IO口
+ * @brief       初始化 PE5/PE6 双路风扇 PWM
  * @param       无
  * @retval      无
  *              

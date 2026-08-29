@@ -38,9 +38,26 @@ LV_FONT_DECLARE(lv_font_sentinel_unit_18);
 
 void custom_init(lv_ui *ui);
 
+/**
+ * @brief  同步设备控制区三个开关下方的状态文字。
+ * @param  buzzer_on     蜂鸣器手动开关状态。
+ * @param  illumination_on 照明自动控制开关状态。
+ * @param  alarm_light_on  报警灯手动开关状态。
+ * @return 无。
+ * @note   必须在 LVGL 任务上下文中调用。
+ */
+void custom_update_control_status(bool buzzer_on, bool illumination_on,
+                                  bool alarm_light_on);
+
+/**
+ * @brief  刷新PF10照明灯的实际输出状态。
+ * @param  light_on true=照明灯实际点亮，false=照明灯实际关闭。
+ * @return 无。
+ * @note   必须在 LVGL 任务上下文中调用。
+ */
+void custom_update_light_output_status(bool light_on);
+
 #ifdef __cplusplus
 }
 #endif
 #endif /* EVENT_CB_H_ */
-
-

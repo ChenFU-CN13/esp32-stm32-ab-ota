@@ -115,7 +115,7 @@ static uint8_t dht11_read_byte(void)
  * @param       temp: 温度值(范围:0~50°)
  * @param       humi: 湿度值(范围:20%~90%)
  * @retval      0, 正常.
- *              1, 失败
+ *              1, 无响应或校验和错误
  */
 uint8_t dht11_read_data(uint8_t *temp, uint8_t *humi)
 {
@@ -130,11 +130,13 @@ uint8_t dht11_read_data(uint8_t *temp, uint8_t *humi)
             buf[i] = dht11_read_byte();
         }
 
-        if ((buf[0] + buf[1] + buf[2] + buf[3]) == buf[4])
+        if ((uint8_t)(buf[0] + buf[1] + buf[2] + buf[3]) != buf[4])
         {
-            *humi = buf[0];
-            *temp = buf[2];
+            return 1;
         }
+
+        *humi = buf[0];
+        *temp = buf[2];
     }
     else
     {

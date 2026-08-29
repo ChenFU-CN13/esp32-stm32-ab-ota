@@ -11,6 +11,12 @@ static bool Alarm_status = 0;
 static int hum = 0;
 //温度
 static int temp = 0;
+//MQ-2烟雾ADC原始值
+static int smoke_adc = 0;
+//BH1750光照值
+static int lux = 0;
+//双风扇同步实际占空比
+static int fan_pct = 0;
 
 //保存当前灯的亮度
 static int led_brightness = 0;
@@ -223,22 +229,35 @@ cJSON* onenet_property_upload_dm(void)
     /*湿度*/
     cJSON* Hum = cJSON_AddObjectToObject(params_js,"hum");/*添加三级对象给二级对象*/
     cJSON_AddNumberToObject(Hum,"value",hum);     /*写入数据*/
-    ESP_LOGI(TAG,"hum value:%d",hum);
 
     /*温度*/
     cJSON* Temp = cJSON_AddObjectToObject(params_js,"temp");/*添加三级对象给二级对象*/
     cJSON_AddNumberToObject(Temp,"value",temp);     /*写入数据*/
-    ESP_LOGI(TAG,"temp value:%d",temp);
 
     /*照明灯*/
     cJSON* Led_status = cJSON_AddObjectToObject(params_js,"LED");/*添加三级对象给二级对象*/
     cJSON_AddBoolToObject(Led_status,"value",led_status);     /*写入数据*/
-    ESP_LOGI(TAG,"LED value:%d",led_status);
 
     /*报警器*/
     cJSON* alarm_status = cJSON_AddObjectToObject(params_js,"Alarm");/*添加三级对象给二级对象*/
     cJSON_AddBoolToObject(alarm_status,"value",Alarm_status);     /*写入数据*/
-    ESP_LOGI(TAG,"Alarm value:%d",Alarm_status);
+
+    /* 烟雾浓度：标识符大小写必须与 OneNET 物模型 Smoke 完全一致。 */
+    cJSON* Smoke = cJSON_AddObjectToObject(params_js,"Smoke");
+    cJSON_AddNumberToObject(Smoke,"value",smoke_adc);
+
+    /* 光照强度：标识符大小写必须与 OneNET 物模型 Lux 完全一致。 */
+    cJSON* Lux = cJSON_AddObjectToObject(params_js,"Lux");
+    cJSON_AddNumberToObject(Lux,"value",lux);
+
+    /* 风扇占空比只上报 STM32 报警引擎最终输出，不接受云端或 UI 拖动值。 */
+    cJSON* Fan = cJSON_AddObjectToObject(params_js,"Fan");
+    cJSON_AddNumberToObject(Fan,"value",fan_pct);
+
+    /* 默认日志级别不输出该调试聚合，避免 500 ms 周期产生 7 条独立日志。 */
+    ESP_LOGD(TAG,
+             "T=%d H=%d LED=%d Alarm=%d Smoke=%d Lux=%d Fan=%d",
+             temp, hum, led_status, Alarm_status, smoke_adc, lux, fan_pct);
 
 
    //cJSON* root = cJSON_CreateObject();     /*创建根对象*/
@@ -306,6 +325,18 @@ void oneNET_update_task(void* pvParameters)
                 Alarm_status = data.value[0];
                 break; 
 
+            case 0x06:
+                smoke_adc = ((int)data.value[0] << 8) | data.value[1];
+                break;
+
+            case 0x07:
+                lux = ((int)data.value[0] << 8) | data.value[1];
+                break;
+
+            case 0x08:
+                fan_pct = data.value[0];
+                break;
+
             default:
                 break;
             }
@@ -323,12 +354,44 @@ void oneNET_update_task(void* pvParameters)
  */
 static void onenet_property_report_task(void *pvParameters)
 {
+    const TickType_t heartbeat_period = pdMS_TO_TICKS(5000U);
+    TickType_t last_heartbeat_tick;
+    TickType_t now_tick;
+    bool online;
+    bool heartbeat_sent = false;
+    bool last_online = false;
+    esp_err_t heartbeat_result;
+
     (void)pvParameters;
     ESP_LOGI(TAG, "Property report task started");
+    last_heartbeat_tick = xTaskGetTickCount() - heartbeat_period;
 
     for (;;)
     {
-        if (onenet_is_connected())
+        now_tick = xTaskGetTickCount();
+        online = onenet_is_connected();
+
+        if ((TickType_t)(now_tick - last_heartbeat_tick) >= heartbeat_period)
+        {
+            heartbeat_result = uart_send_business_heartbeat(online);
+            if (heartbeat_result == ESP_OK)
+            {
+                if ((!heartbeat_sent) || (last_online != online))
+                {
+                    ESP_LOGI(TAG, "[HEARTBEAT] OneNET=%s", online ? "ON" : "OFF");
+                }
+                heartbeat_sent = true;
+                last_online = online;
+            }
+            else if (heartbeat_result != ESP_ERR_INVALID_STATE)
+            {
+                ESP_LOGW(TAG, "[HEARTBEAT] UART send failed: %s",
+                         esp_err_to_name(heartbeat_result));
+            }
+            last_heartbeat_tick = now_tick;
+        }
+
+        if (online)
         {
             cJSON *property_js = onenet_property_upload_dm();
             if (property_js != NULL)

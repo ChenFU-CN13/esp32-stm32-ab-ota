@@ -89,13 +89,17 @@ void app_main(void)
 {
     BaseType_t task_ret;
 
-    #if 1
+#if 1
         /* 先建立STM32版本同步状态，再启动UART，避免APP上电即上报时丢失事件。 */
-        if (onenet_ota_init() != ESP_OK)
-        {
-            ESP_LOGE(TAG, "OTA Manager初始化失败");
-            return;
-        }
+        #if !ONENET_OTA_DISABLED
+                if (onenet_ota_init() != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "OTA Manager初始化失败");
+                    return;
+                }
+        #else
+                ESP_LOGI(TAG, "[总开关] ONENET_OTA_DISABLED=1，已跳过onenet_ota_init()调用");
+        #endif
 
         UART_config_init_AND_UART_recive_TASK(&myuart,UART_NUM_1);/*开启串口接收任务，已包含串口缓冲区任务创建*/
         task_ret = xTaskCreatePinnedToCore(vMQTT_ONENET_Task,
