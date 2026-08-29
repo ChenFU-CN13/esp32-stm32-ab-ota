@@ -2,7 +2,7 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "gpio.h"
-#include "FAN.h"
+#include "fan_pwm.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -41,9 +41,9 @@ void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN 0 */
 
 /* 与Bootloader保持相同IWDG配置，避免跳转交接时出现超时窗口突变。 */
-#define APP_IWDG_PRESCALER              4U
-#define APP_IWDG_RELOAD                 2499U
-#define APP_IWDG_UPDATE_TIMEOUT         100U
+#define APP_IWDG_PRESCALER              4U      //看门狗四分频
+#define APP_IWDG_RELOAD                 2499U   //重装载计数值
+#define APP_IWDG_UPDATE_TIMEOUT         100U    //看门狗超时时间
 
 /**
  * @brief 初始化正式APP独立看门狗。
@@ -127,22 +127,20 @@ int main(void)
 
  
 	MX_GPIO_Init();
-	APP_Watchdog_Refresh();
-
-    
+	APP_Watchdog_Refresh();     //看门狗喂狗
   delay_init(); 						
   usart_init(115200);//注意:这个是串口1 
 	USART2_DMA1_Init();
 	USART2_Init(115200);
 	APP_Watchdog_Refresh();
 	sram_init();
-	FAN_init();
+	FAN_PWM_Init();
 	APP_Watchdog_Refresh();
 
   
 	printf("============================= \r\n");
 	printf("enter A code is successfully! \r\n");
-  printf("调试:该固件版本为v1.0.16! \r\n");
+  printf("调试:该固件版本为v2.0.0! \r\n");
 	printf("[IWDG] APP已接管，超时限制约5000 ms\r\n");
 	printf("============================= \r\n");
 
@@ -154,7 +152,7 @@ int main(void)
 	APP_Watchdog_Refresh();
 	
   /* Start scheduler */
-  osKernelStart();
+  osKernelStart();    //开启调度器
   /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */

@@ -7,6 +7,7 @@
 #define UART2_COMM_BUSINESS_HEAD       0x55U
 #define UART2_COMM_BUSINESS_TAIL       0xBBU
 #define UART2_COMM_BUSINESS_ACK_TYPE   0x7EU
+#define UART2_COMM_HEARTBEAT_TYPE      0x0AU
 
 /* OTA通知和ACK帧：0x66 command 0xBB。 */
 #define UART2_COMM_OTA_HEAD            0x66U

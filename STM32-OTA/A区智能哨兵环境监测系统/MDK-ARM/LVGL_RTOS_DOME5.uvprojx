@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx,NO_BOOT_MODE</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\Drivers;..\LVGL;..\LVGL\examples\porting;..\LVGL\src;..\LVGL\demos;..\LVGL\myGUI\custom;..\LVGL\myGUI\generated;..\LVGL\myGUI\generated\guider_fonts;..\Drivers\Module_driver\inc;..\LVGL\myGUI\generated\guider_customer_fonts</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\Drivers;..\LVGL;..\LVGL\examples\porting;..\LVGL\src;..\LVGL\demos;..\LVGL\myGUI\custom;..\LVGL\myGUI\generated;..\LVGL\myGUI\generated\guider_fonts;..\Drivers\Module_driver\inc;..\Middlewares\Services\inc;..\LVGL\myGUI\generated\guider_customer_fonts</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -513,6 +513,16 @@
               <FileName>stm32f4xx_hal_exti.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_exti.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f4xx_hal_adc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_adc.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f4xx_hal_adc_ex.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_adc_ex.c</FilePath>
             </File>
             <File>
               <FileName>stm32f4xx_hal_tim.c</FileName>
@@ -1858,6 +1868,41 @@
               <FileName>FAN.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\Module_driver\src\FAN.c</FilePath>
+            </File>
+            <File>
+              <FileName>fan_pwm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\Module_driver\src\fan_pwm.c</FilePath>
+            </File>
+            <File>
+              <FileName>mq2.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\Module_driver\src\mq2.c</FilePath>
+            </File>
+            <File>
+              <FileName>bh1750.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\Module_driver\src\bh1750.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Middlewares/Services</GroupName>
+          <Files>
+            <File>
+              <FileName>config_manager.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\Services\src\config_manager.c</FilePath>
+            </File>
+            <File>
+              <FileName>alarm_engine.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\Services\src\alarm_engine.c</FilePath>
+            </File>
+            <File>
+              <FileName>fan_controller.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\Services\src\fan_controller.c</FilePath>
             </File>
           </Files>
         </Group>

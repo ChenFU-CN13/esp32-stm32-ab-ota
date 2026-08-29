@@ -16,6 +16,7 @@
 #define UART2_COMM_VERSION_RETRY_MS       5000U
 #define UART2_COMM_TASK_STACK_DEPTH         (128U * 2U)
 #define UART2_COMM_TASK_PRIORITY            3U
+#define UART2_COMM_VERBOSE_BUSINESS_LOG      0U
 
 #define UART2_COMM_VERSION_TYPE              0x05U
 #define UART2_COMM_EEPROM_VERSION_ADDR       0x2CU
@@ -329,7 +330,9 @@ static void UART2_Comm_ProcessCompletedFrame(void)
         (s_rx_frame[5] == 0U) &&
         (s_rx_frame[6] == 0U))
     {
+#if UART2_COMM_VERBOSE_BUSINESS_LOG
         UART2_Comm_LogFrame("[UART2][RX][ACK]", s_rx_frame, s_rx_expected_length);
+#endif
         UART2_Comm_HandleBusinessAck(s_rx_frame[2]);
     }
     else if ((s_rx_expected_length == sizeof(s_ota_ack_frame)) &&
@@ -354,9 +357,21 @@ static void UART2_Comm_ProcessCompletedFrame(void)
                             s_rx_expected_length);
         UART2_Comm_HandleVersionRequest();
     }
+    else if ((s_rx_expected_length == sizeof(UART_Packet_t)) &&
+             (s_rx_frame[1] == UART2_COMM_HEARTBEAT_TYPE) &&
+             (s_rx_frame[2] <= 1U) &&
+             (s_rx_frame[3] == 0U) &&
+             (s_rx_frame[4] == 0U) &&
+             (s_rx_frame[5] == 0U) &&
+             (s_rx_frame[6] == 0U) &&
+             (s_rx_frame[sizeof(UART_Packet_t) - 1U] == UART2_COMM_BUSINESS_TAIL))
+    {
+        /* ESP32→STM32 心跳：55 0A status 00 00 00 00 BB；不返回业务 ACK。 */
+        APP_IotHeartbeatUpdate(s_rx_frame[2], HAL_GetTick());
+    }
     else
     {
-        /* 收满但不符合 ACK 或 OTA 格式的数据也记录下来，方便定位协议版本或线路异常。 */
+        /* 收满但不符合 ACK、心跳或 OTA 格式的数据记录下来，便于定位线路异常。 */
         UART2_Comm_LogFrame("[UART2][RX][DROP]", s_rx_frame, s_rx_expected_length);
     }
 }
@@ -470,6 +485,26 @@ static void UART2_Comm_QueueBusinessPackets(void)
             UART2_Comm_QueuePacket(&packet);
             break;
 
+        case MSG_TYPE_SMOKE:
+            UART2_Comm_InitPacket(&packet, 0x06U);
+            packet.data[0] = (uint8_t)(msg.data.smoke_adc >> 8U);
+            packet.data[1] = (uint8_t)(msg.data.smoke_adc & 0xFFU);
+            UART2_Comm_QueuePacket(&packet);
+            break;
+
+        case MSG_TYPE_LIGHT:
+            UART2_Comm_InitPacket(&packet, 0x07U);
+            packet.data[0] = (uint8_t)(msg.data.lux >> 8U);
+            packet.data[1] = (uint8_t)(msg.data.lux & 0xFFU);
+            UART2_Comm_QueuePacket(&packet);
+            break;
+
+        case MSG_TYPE_FAN:
+            UART2_Comm_InitPacket(&packet, 0x08U);
+            packet.data[0] = (msg.data.fan_pct > 100U) ? 100U : msg.data.fan_pct;
+            UART2_Comm_QueuePacket(&packet);
+            break;
+
         default:
             break;
     }
@@ -510,9 +545,11 @@ static void UART2_Comm_TryStartBusinessTx(void)
     if (UART2_Comm_StartDmaTx((uint8_t *)&s_active_business_packet,
                               sizeof(s_active_business_packet)) == pdPASS)
     {
+#if UART2_COMM_VERBOSE_BUSINESS_LOG
         UART2_Comm_LogFrame("[UART2][TX][BUS]",
                             (const uint8_t *)&s_active_business_packet,
                             sizeof(s_active_business_packet));
+#endif
        //printf("[UART2][TX] send: type=0x%02X value=%u, attempt=1\r\n",
        //       (unsigned int)s_active_business_packet.type,
        //       (unsigned int)s_active_business_packet.data[0]);

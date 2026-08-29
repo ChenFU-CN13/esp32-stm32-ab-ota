@@ -24,6 +24,10 @@ const static size_t buffer_size = 256;
 #define UART_BUSINESS_ACK_INVALID      0x01U
 #define UART_BUSINESS_ACK_QUEUE_FULL   0x02U
 #define UART_BUSINESS_TYPE_VERSION     0x05U
+#define UART_BUSINESS_TYPE_SMOKE       0x06U
+#define UART_BUSINESS_TYPE_LUX         0x07U
+#define UART_BUSINESS_TYPE_FAN         0x08U
+#define UART_BUSINESS_TYPE_HEARTBEAT   0x0AU
 
 /*
  * STM32 当前通讯任务只识别固定 8 字节 ACK：
@@ -32,6 +36,7 @@ const static size_t buffer_size = 256;
  */
 static uint8_t s_business_frame[UART_BUSINESS_FRAME_SIZE];
 static size_t s_business_frame_length = 0U;
+static uart_port_t s_business_uart_num = UART_NUM_MAX;
 
 QueueHandle_t uart_queue = NULL;              /* UART事件队列句柄 */
 QueueHandle_t uart_oneNET_data_queue = NULL;  /* 串口数据传递到oneNET的队列 */
@@ -92,7 +97,18 @@ void UART_config_init_AND_UART_recive_TASK(uart_param_config_t *uart_param,
      * - 0: 中断分配标志
      */
     uart_driver_install(uart_param->UART_PORT, 1024, 1024, 10, &uart_queue, 0);
+
+    /* 保存业务串口号，供周期心跳复用同一发送通路。 */
+    s_business_uart_num = uart_num;
     
+    /* 先创建物模型队列，避免接收任务抢先运行时把首帧误判为队列未初始化。 */
+    uart_oneNET_data_queue = xQueueCreate(10, sizeof(uart_oneNET_data_t));
+    if (uart_oneNET_data_queue == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create OneNET UART queue");
+        return;
+    }
+
     /* 创建串口接收任务 */
     xTaskCreatePinnedToCore(uart_recive_buff,
                             "uart_recive_buff",
@@ -102,8 +118,40 @@ void UART_config_init_AND_UART_recive_TASK(uart_param_config_t *uart_param,
                             &recive_buff1_handle,
                             0);
 
-    /* 创建数据队列，用于将串口数据传递到oneNET任务 */
-    uart_oneNET_data_queue = xQueueCreate(10, sizeof(uart_oneNET_data_t));
+}
+
+/**
+ * @brief 向 STM32 发送 OneNET 本地连接心跳。
+ * @param online true=OneNET在线，false=离线。
+ * @return ESP_OK=发送成功；ESP_ERR_INVALID_STATE=UART未初始化或OTA独占；ESP_FAIL=写入失败。
+ * @note 8字节在一次 uart_write_bytes 调用中提交，避免与业务 ACK 形成字节级交叉。
+ */
+esp_err_t uart_send_business_heartbeat(bool online)
+{
+    const uint8_t heartbeat_frame[UART_BUSINESS_FRAME_SIZE] = {
+        UART_BUSINESS_HEAD,
+        UART_BUSINESS_TYPE_HEARTBEAT,
+        online ? 0x01U : 0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x00U,
+        UART_BUSINESS_TAIL
+    };
+
+    if ((s_business_uart_num >= UART_NUM_MAX) || g_ota_uart_busy)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (uart_write_bytes(s_business_uart_num,
+                         (const char *)heartbeat_frame,
+                         sizeof(heartbeat_frame)) != (int)sizeof(heartbeat_frame))
+    {
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
 /**
@@ -304,8 +352,7 @@ static void uart_business_feed_byte(uart_port_t uart_num, uint8_t byte)
         return;
     }
 
-    //ESP_LOGI(TAG, "[UART][RX][BUS] complete frame");
-    ESP_LOG_BUFFER_HEX(TAG, s_business_frame, UART_BUSINESS_FRAME_SIZE);
+    /* 正常业务帧不逐包打印，异常、队列满和心跳状态变化仍保留简洁日志。 */
 
     /* 物模型帧成功入队或版本帧成功缓存后，才回复成功ACK。 */
     ret = uartData_to_oneNET(s_business_frame);
@@ -338,7 +385,7 @@ esp_err_t uartData_to_oneNET(uint8_t* uart_buffr)
     if (uart_buffr[0] == 0x55 && uart_buffr[7] == 0xbb)    
     {
         uint8_t temp = uart_buffr[1];
-        uart_oneNET_data_t oneNET_Data;
+        uart_oneNET_data_t oneNET_Data = {0};
         
         switch (temp)
         {        
@@ -362,6 +409,44 @@ esp_err_t uartData_to_oneNET(uint8_t* uart_buffr)
                 oneNET_Data.value[0] = uart_buffr[2];
                 break;
 
+            case UART_BUSINESS_TYPE_SMOKE:  /* MQ-2 12位ADC原始值，大端 */
+                if ((uart_buffr[2] > 0x0FU) ||
+                    (uart_buffr[4] != 0x00U) ||
+                    (uart_buffr[5] != 0x00U) ||
+                    (uart_buffr[6] != 0x00U))
+                {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                oneNET_Data.type = UART_BUSINESS_TYPE_SMOKE;
+                oneNET_Data.value[0] = uart_buffr[2];
+                oneNET_Data.value[1] = uart_buffr[3];
+                break;
+
+            case UART_BUSINESS_TYPE_LUX:  /* BH1750照度整数，大端 */
+                if ((uart_buffr[4] != 0x00U) ||
+                    (uart_buffr[5] != 0x00U) ||
+                    (uart_buffr[6] != 0x00U))
+                {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                oneNET_Data.type = UART_BUSINESS_TYPE_LUX;
+                oneNET_Data.value[0] = uart_buffr[2];
+                oneNET_Data.value[1] = uart_buffr[3];
+                break;
+
+            case UART_BUSINESS_TYPE_FAN:  /* 双风扇同步实际占空比 */
+                if ((uart_buffr[2] > 100U) ||
+                    (uart_buffr[3] != 0x00U) ||
+                    (uart_buffr[4] != 0x00U) ||
+                    (uart_buffr[5] != 0x00U) ||
+                    (uart_buffr[6] != 0x00U))
+                {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                oneNET_Data.type = UART_BUSINESS_TYPE_FAN;
+                oneNET_Data.value[0] = uart_buffr[2];
+                break;
+
             case UART_BUSINESS_TYPE_VERSION:  /* STM32 APP当前版本 */
                 /* data[3]、data[4]为保留字段，非0说明协议版本不一致。 */
                 if ((uart_buffr[5] != 0x00U) || (uart_buffr[6] != 0x00U))
@@ -382,7 +467,7 @@ esp_err_t uartData_to_oneNET(uint8_t* uart_buffr)
                 return ESP_OK;
 
             default:
-                /* 当前业务协议仅定义0x01~0x05，其他type不应被错误确认为成功。 */
+                /* 当前业务协议仅定义0x01~0x08中的上述类型，其他type不确认成功。 */
                 ESP_LOGW(TAG, "[UART][BIZ] unsupported type=0x%02X", temp);
                 return ESP_ERR_NOT_SUPPORTED;
         }

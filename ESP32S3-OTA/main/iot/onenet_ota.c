@@ -103,13 +103,17 @@ static esp_err_t onenet_ota_mount_spiffs_once(void)
 }
 
 /**
- * @brief 初始化STM32版本同步状态、SPIFFS和常驻OTA Manager。
+ * @brief 初始化STM32版本同步状态、SPIFFS和常驻OTA Manager。（已加入app测试阶段关闭）
  * @param 无。
  * @return ESP_OK表示初始化成功，其他值表示资源初始化失败。
  * @note 在UART任务创建前调用；重复调用不会清除版本、重复挂载或重复创建任务。
  */
 esp_err_t onenet_ota_init(void)
 {
+#if ONENET_OTA_DISABLED
+    ESP_LOGI(TAG, "[OTA已停用] 调试模式，跳过OTA Manager初始化、SPIFFS挂载和任务创建");
+    return ESP_OK;
+#else
     esp_err_t ret;
 
     ret = onenet_ota_mount_spiffs_once();
@@ -119,10 +123,11 @@ esp_err_t onenet_ota_init(void)
     }
 
     return ota_manager_init(onenet_ota_run_once, onenet_is_connected);
+#endif
 }
 
 /**
- * @brief 缓存STM32 APP上报的版本并唤醒OTA任务。
+ * @brief 缓存STM32 APP上报的版本并唤醒OTA任务。（已加入app测试阶段关闭）
  * @param major 主版本号。
  * @param minor 次版本号。
  * @param patch 修订号。
@@ -133,7 +138,12 @@ esp_err_t onenet_ota_notify_stm32_version(uint8_t major,
                                           uint8_t minor,
                                           uint8_t patch)
 {
+#if ONENET_OTA_DISABLED
+    /* 停用后静默丢弃版本报告，返回OK避免UART任务打印无效状态日志 */
+    return ESP_OK;
+#else
     return ota_manager_notify_stm32_version(major, minor, patch);
+#endif
 }
 
 
@@ -1392,12 +1402,25 @@ void test_read_firmware(void)
 }
 
 /**
- * @brief 向OTA Manager投递一次检查请求。
+ * @brief 向OTA Manager投递一次检查请求。（已加入app测试阶段关闭）
  * @param trigger 触发来源。
  * @return ESP_OK表示请求已锁存，ESP_ERR_INVALID_STATE表示Manager未初始化。
  */
 esp_err_t onenet_ota_request_check(onenet_ota_trigger_t trigger)
 {
+    #if ONENET_OTA_DISABLED
+        static const char *const trigger_Names[] =
+        {
+            "mqtt-connected",
+            "mqtt-inform",
+            "periodic"
+        };
+        (void)trigger_Names;
+        ESP_LOGI(TAG, "[OTA已停用] 忽略触发来源=%s", trigger_Names[trigger]);
+        return ESP_OK;
+#else
+
+
     static const char *const trigger_names[] = {
         "mqtt-connected",
         "mqtt-inform",
@@ -1416,19 +1439,24 @@ esp_err_t onenet_ota_request_check(onenet_ota_trigger_t trigger)
     }
     ESP_LOGI(TAG, "[MANAGER] check requested by %s", trigger_names[trigger]);
     return ESP_OK;
+#endif
+
 }
 
 /**
- * @brief 兼容旧入口，按MQTT连接事件请求一次平台检查。
+ * @brief 兼容旧入口，按MQTT连接事件请求一次平台检查。(已加入app测试阶段关闭)
  * @param 无。
  * @return 无。
  */
 void onenet_ota_start(void)
 {
+#if ONENET_OTA_DISABLED
+    ESP_LOGI(TAG, "[OTA已停用] onenet_ota_start() 被忽略");
+#else
     if (onenet_ota_request_check(ONENET_OTA_TRIGGER_MQTT_CONNECTED) != ESP_OK)
     {
         ESP_LOGE(TAG, "OTA Manager未初始化，无法投递检查请求");
     }
+#endif
 }
-
 

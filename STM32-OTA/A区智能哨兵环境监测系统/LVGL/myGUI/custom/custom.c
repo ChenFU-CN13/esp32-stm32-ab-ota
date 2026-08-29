@@ -22,6 +22,10 @@
 #define UI_COLOR_SETTING_BLUE  lv_color_hex(0x3785FF)
 
 static lv_obj_t *s_styled_main_screen;
+static lv_obj_t *s_buzzer_status_label;
+static lv_obj_t *s_illumination_status_label;
+static lv_obj_t *s_light_output_status_label;
+static lv_obj_t *s_alarm_light_status_label;
 static bool s_styles_ready;
 static lv_style_t s_card_style;
 static lv_style_t s_name_style;
@@ -227,6 +231,67 @@ static lv_obj_t *ui_create_hint(lv_obj_t *parent, const char *text,
 }
 
 /**
+ * @brief  更新单个设备开关的状态标签。
+ * @param  label   状态标签对象。
+ * @param  enabled  当前状态是否开启。
+ * @param  on_text  开启时显示的文字。
+ * @param  off_text 关闭时显示的文字。
+ * @return 无。
+ * @note   标签失效时直接忽略，避免页面生命周期变化导致访问无效对象。
+ */
+static void ui_update_control_status_label(lv_obj_t *label, bool enabled,
+                                           const char *on_text,
+                                           const char *off_text)
+{
+    if (label == NULL || !lv_obj_is_valid(label)) {
+        return;
+    }
+
+    lv_label_set_text(label, enabled ? on_text : off_text);
+    lv_obj_set_style_text_color(label,
+                                enabled ? UI_COLOR_PRIMARY : UI_COLOR_MUTED,
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+/**
+ * @brief  同步设备控制区三个开关下方的状态文字。
+ * @param  buzzer_on       蜂鸣器手动开关状态。
+ * @param  illumination_on 照明自动控制开关状态。
+ * @param  alarm_light_on  报警灯手动开关状态。
+ * @return 无。
+ * @note   状态文字跟随用户开关意图，不跟随烟雾报警期间的临时硬件覆盖输出。
+ */
+void custom_update_control_status(bool buzzer_on, bool illumination_on,
+                                  bool alarm_light_on)
+{
+    ui_update_control_status_label(s_buzzer_status_label, buzzer_on,
+                                   "已开启", "已关闭");
+    ui_update_control_status_label(s_illumination_status_label, illumination_on,
+                                   "控制开启", "控制关闭");
+    ui_update_control_status_label(s_alarm_light_status_label, alarm_light_on,
+                                   "已开启", "已关闭");
+}
+
+/**
+ * @brief  刷新PF10照明灯的实际输出状态。
+ * @param  light_on true=照明灯实际点亮，false=照明灯实际关闭。
+ * @return 无。
+ * @note   该状态来自报警引擎最终输出，不等同于自动控制开关状态。
+ */
+void custom_update_light_output_status(bool light_on)
+{
+    ui_update_control_status_label(s_light_output_status_label, light_on,
+                                   "已开启", "已关闭");
+
+    if (s_light_output_status_label != NULL &&
+        lv_obj_is_valid(s_light_output_status_label) && light_on) {
+        lv_obj_set_style_text_color(s_light_output_status_label,
+                                    UI_COLOR_ORANGE,
+                                    LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
+/**
  * @brief  设置普通中文标签的统一样式和位置。
  * @param  label 标签对象。
  * @param  x     横坐标。
@@ -424,13 +489,18 @@ static void ui_style_main_screen(lv_ui *ui)
     lv_obj_set_style_text_color(ui->screen_label_IOT, UI_COLOR_TEXT,
                                 LV_PART_MAIN | LV_STATE_DEFAULT);
     ui_create_icon_disc(root, 699, 31, 8, UI_COLOR_GREEN);
-    lv_label_set_text(ui->screen_iot_flag, "已连接");
+    /* 尚未收到 ESP32 心跳前按离线显示，后续由 LVGL 任务切换 ON/NC。 */
+    lv_label_set_text(ui->screen_iot_flag, "NC");
     lv_obj_remove_style_all(ui->screen_iot_flag);
     lv_obj_set_pos(ui->screen_iot_flag, 713, 25);
     lv_obj_set_size(ui->screen_iot_flag, 52, 22);
     lv_obj_add_style(ui->screen_iot_flag, &s_small_text_style,
                      LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(ui->screen_iot_flag, UI_COLOR_GREEN, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* 状态只显示 ASCII；使用完整拉丁字体，避免精简中文字体缺少 C 而显示方框。 */
+    lv_obj_set_style_text_font(ui->screen_iot_flag, &lv_font_montserrat_16,
+                               LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui->screen_iot_flag, UI_COLOR_RED,
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
 
     /* 四个传感器卡片。 */
     ui_create_icon_disc(root, 28, 88, 68, lv_color_hex(0xEAF3FF));
@@ -452,15 +522,10 @@ static void ui_style_main_screen(lv_ui *ui)
     ui_style_name_label(ui->screen_label_sunlight, 116, 210, 135);
     ui_style_name_label(ui->screen_label_smoke, 510, 210, 135);
 
-    if (lv_label_get_text(ui->screen_temperature_num)[0] == '\0') {
-        lv_label_set_text(ui->screen_temperature_num, "26.5");
-    }
-    if (lv_label_get_text(ui->screen_humidity_num)[0] == '\0') {
-        lv_label_set_text(ui->screen_humidity_num, "68");
-    }
-    if (lv_label_get_text(ui->screen_sunlight_num)[0] == '\0') {
-        lv_label_set_text(ui->screen_sunlight_num, "560");
-    }
+    /* 温湿度和光照尚未取得有效样本前统一显示 NC。 */
+    lv_label_set_text(ui->screen_temperature_num, "NC");
+    lv_label_set_text(ui->screen_humidity_num, "NC");
+    lv_label_set_text(ui->screen_sunlight_num, "NC");
     if (lv_label_get_text(ui->screen_smoke_num)[0] == '\0') {
         lv_label_set_text(ui->screen_smoke_num, "12");
     }
@@ -518,7 +583,7 @@ static void ui_style_main_screen(lv_ui *ui)
     lv_obj_set_style_text_font(ui->screen_label_fan, &lv_font_sentinel_cn_16,
                                LV_PART_MAIN | LV_STATE_DEFAULT);
     ui_style_name_label(ui->screen_label_buzzer, 281, 345, 100);
-    ui_style_name_label(ui->screen_label_light, 475, 345, 100);
+    ui_style_name_label(ui->screen_label_light, 475, 345, 60);
     ui_style_name_label(ui->screen_Alarm_light, 669, 345, 100);
 
     if (lv_label_get_text(ui->screen_fan_num)[0] == '\0') {
@@ -576,10 +641,19 @@ static void ui_style_main_screen(lv_ui *ui)
     ui_style_switch(ui->screen_sw_buzzer, 283, 383);
     ui_style_switch(ui->screen_sw_light, 477, 383);
     ui_style_switch(ui->screen_sw_Alarm_light, 671, 383);
-    lv_obj_add_state(ui->screen_sw_light, LV_STATE_CHECKED);
-    ui_create_hint(root, "已关闭", 286, 410, 60, UI_COLOR_MUTED);
-    ui_create_hint(root, "已开启", 480, 410, 60, UI_COLOR_PRIMARY);
-    ui_create_hint(root, "已关闭", 674, 410, 60, UI_COLOR_MUTED);
+    s_buzzer_status_label = ui_create_hint(root, "已关闭", 286, 410, 60,
+                                           UI_COLOR_MUTED);
+    s_illumination_status_label = ui_create_hint(root, "控制关闭", 477, 410, 70,
+                                                 UI_COLOR_MUTED);
+    s_light_output_status_label = ui_create_hint(root, "已关闭", 535, 347, 60,
+                                                 UI_COLOR_MUTED);
+    s_alarm_light_status_label = ui_create_hint(root, "已关闭", 674, 410, 60,
+                                                UI_COLOR_MUTED);
+    custom_update_control_status(
+        lv_obj_has_state(ui->screen_sw_buzzer, LV_STATE_CHECKED),
+        lv_obj_has_state(ui->screen_sw_light, LV_STATE_CHECKED),
+        lv_obj_has_state(ui->screen_sw_Alarm_light, LV_STATE_CHECKED));
+    custom_update_light_output_status(false);
 
     /* 底部设置入口和更新时间。 */
     /* 原设置图片保留事件回调，只作为透明点击热区。 */
@@ -701,4 +775,3 @@ static void ui_style_setting_page(lv_ui *ui)
     ui_style_setting_solid_blue(ui->screen_setting_btn_Version);
     ui_style_setting_solid_blue(ui->screen_setting_btn_default);
 }
-
