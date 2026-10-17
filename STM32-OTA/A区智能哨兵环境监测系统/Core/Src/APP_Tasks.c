@@ -1,5 +1,5 @@
-﻿#include "APP_Tasks.h"
-#include "DTH11.h"
+#include "APP_Tasks.h"
+#include "modbus_th.h"
 #include "buzzer.h"
 #include "mq2.h"
 #include "bh1750.h"
@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define APP_DHT_PERIOD_MS              2000U    /**< DHT温湿度传感器采集周期，单位ms，2000ms即2秒 */
+#define APP_SHT30_PERIOD_MS            1000    /**< SHT30温湿度传感器采集周期，单位ms */
 #define APP_SMOKE_PERIOD_MS             500U    /**< 烟雾传感器采集周期，单位ms，500ms即0.5秒 */
 #define APP_MQ2_PREHEAT_MS           1200000UL   /**< MQ-2上电预热时间（大概16分钟），预热期间只采集、不参与报警判断 */
 #define APP_LIGHT_PERIOD_MS            1000U    /**< 光照传感器采集周期，单位ms，1000ms即1秒 */
@@ -42,7 +42,7 @@ volatile uint8_t g_iot_connected = 0U;
 volatile uint32_t g_last_heartbeat_tick = 0UL;
 
 /* 静态任务句柄，仅本文件内部使用，各个传感器、告警任务的任务句柄 */
-static TaskHandle_t s_dht11_task_handle = NULL;      /* DHT11温湿度任务句柄 */
+static TaskHandle_t s_sht30_task_handle = NULL;      /* SHT30温湿度任务句柄 */
 static TaskHandle_t s_smoke_task_handle = NULL;       /* 烟雾检测任务句柄 */
 static TaskHandle_t s_light_task_handle = NULL;       /* 光照采集任务句柄 */
 static TaskHandle_t s_alarm_task_handle = NULL;       /* 告警引擎业务任务句柄 */
@@ -63,10 +63,10 @@ static uint16_t s_edit_light_high = 20U;/* 光照高于20lx时关灯 */
 
 /************************ 本文件内部函数声明(static，外部不可调用) ************************/
 /**
- * @brief DHT11温湿度采集任务函数
+ * @brief SHT30温湿度采集任务函数
  * @param parameters 任务创建传入参数
  */
-static void DHT11Task(void *parameters);
+static void SHT30Task(void *parameters);
 
 /**
  * @brief 烟雾传感器采集任务函数
@@ -159,45 +159,44 @@ static BaseType_t APP_QueueUartMessage(const UART_Msg_t *message)
 好处：既保证了数据一致性，又**最大限度缩短了临界区时长**（临界区只做赋值和拷贝，耗时极短），是嵌入式多任务编程的最佳实践之一。
 */
 
-
 /**
- * @brief DHT11 温湿度采集任务。
+ * @brief SHT30 温湿度采集任务。
  * @param parameters 未使用。
  * @return 无，任务永久运行。
- * @note 每 2 秒采集一次，成功后同时更新 UI、报警输入和 UART2 上报队列。
+ * @note 每2秒读取一次。内部保留1位小数，UI直接显示；UART2上报时再转成整数。
  */
-static void DHT11Task(void *parameters)
+static void SHT30Task(void *parameters)
 {
-    uint8_t temp = 0U;
-    uint8_t humi = 0U;
-    uint8_t read_failed = 0U;
+    MBTH_FixedData_t data;
+    MBTH_Status_t status;
     sensor_Data_t snapshot;
     UART_Msg_t message;
+    TickType_t last_wake_time;
+    uint16_t humi_integer;
+    uint8_t read_failed = 0U;
 
     (void)parameters;
-    if (dht11_init() != 0U)
-    {
-        printf("[SENSOR][DHT11] init FAIL\r\n");
-        read_failed = 1U;
-    }
-    else
-    {
-        printf("[SENSOR][DHT11] init OK\r\n");
-    }
+    last_wake_time = xTaskGetTickCount();
 
     for (;;)
     {
-        if (dht11_read_data(&temp, &humi) == 0U)
+        status = MBTH_ReadFixed(&huart3, MBTH_DEFAULT_ADDR, &data);
+        if ((status == MBTH_OK) && (data.humi_x10 <= 1000U))
         {
+            /* 温湿度必须成组更新，防止其他任务读到一新一旧的组合。 */
             taskENTER_CRITICAL();
-            g_sensor_data.temp = temp;
-            g_sensor_data.humi = humi;
-            g_sensor_data.valid_mask |= SENSOR_VALID_DHT11;
+            g_sensor_data.temp_x10 = data.temp_x10;
+            g_sensor_data.humi_x10 = data.humi_x10;
+            g_sensor_data.valid_mask |= SENSOR_VALID_TEMP_HUMI;
             snapshot = g_sensor_data;
             taskEXIT_CRITICAL();
-            ALARM_UpdateDht((int16_t)temp * 10, (int16_t)humi);
 
-            /*- 使用 `xQueueOverwrite` 向 UI 队列写入数据，这是 FreeRTOS 专门为 “只需要最新值” 场景设计的 API：
+            /* 报警阈值仍使用整数湿度，四舍五入后再交给报警引擎。 */
+            humi_integer = (uint16_t)((data.humi_x10 + 5U) / 10U);
+            ALARM_UpdateTempHumi(data.temp_x10, (int16_t)humi_integer, 1U);
+
+            /* UI队列长度为1，只保留最新快照，不积压历史采样值。 */
+			/*- 使用 `xQueueOverwrite` 向 UI 队列写入数据，这是 FreeRTOS 专门为 “只需要最新值” 场景设计的 API：
             - 队列满时，直接覆盖最旧的数据，永远不会阻塞；
             - 非常适合 UI 刷新场景 —— 显示屏只需要显示当前最新的温湿度，积压的历史数据没有意义。
             - 先判断队列句柄非空，增强鲁棒性，避免队列未创建时跑飞。*/
@@ -207,33 +206,50 @@ static void DHT11Task(void *parameters)
             }
 
             memset(&message, 0, sizeof(message));
-            message.type = MSG_TYPE_DHT11;
-            message.data.dht11_data = snapshot;
+            message.type = MSG_TYPE_TEMP_HUMI;
+            message.data.temp_humi_data = snapshot;
             if (APP_QueueUartMessage(&message) != pdPASS)
             {
-                printf("[UART2] DHT report queue full\r\n");
+                printf("[UART2] temp/humi report queue full\r\n");
             }
 
             if (read_failed != 0U)
             {
-                printf("[SENSOR][DHT11] recovered\r\n");
+                printf("[SENSOR][SHT30] recovered\r\n");
                 read_failed = 0U;
             }
         }
         else
         {
+            /* 保留最后一次数值便于排查，但清除有效位，UI显示NC，报警不再使用旧数据。 */
             taskENTER_CRITICAL();
-            g_sensor_data.valid_mask &= (uint8_t)(~SENSOR_VALID_DHT11);
+            g_sensor_data.valid_mask &= (uint8_t)(~SENSOR_VALID_TEMP_HUMI);
+            snapshot = g_sensor_data;
             taskEXIT_CRITICAL();
+            ALARM_UpdateTempHumi(0, 0, 0U);
+
+            if (xUI_Datas_Queue != NULL)
+            {
+                (void)xQueueOverwrite(xUI_Datas_Queue, &snapshot);
+            }
 
             if (read_failed == 0U)
             {
-                printf("[SENSOR][DHT11] read FAIL\r\n");
+                if (status == MBTH_OK)
+                {
+                    printf("[SENSOR][SHT30] invalid data, T=%d, H=%u\r\n",
+                           (int)data.temp_x10,
+                           (unsigned int)data.humi_x10);
+                }
+                else
+                {
+                    printf("[SENSOR][SHT30] read FAIL, status=%d\r\n", (int)status);
+                }
             }
             read_failed = 1U;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(APP_DHT_PERIOD_MS));
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(APP_SHT30_PERIOD_MS));
     }
 }
 
@@ -774,13 +790,14 @@ void AppTasks_Create(void)
            (MQ2_IsReady() != 0U) ? "OK" : "FAIL",
            (BH1750_IsReady() != 0U) ? "OK" : "FAIL");
 
-    task_result = xTaskCreate(DHT11Task,
-                              "DHT11Task",
+    task_result = xTaskCreate(SHT30Task,
+                              "SHT30Task",
                               256U,
                               NULL,
                               4U,
-                              &s_dht11_task_handle);
+                              &s_sht30_task_handle);
     configASSERT(task_result == pdPASS);
+
 
     task_result = xTaskCreate(SmokeTask,
                               "SmokeTask",

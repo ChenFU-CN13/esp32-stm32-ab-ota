@@ -44,6 +44,8 @@ void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); 
 static void APP_UI_UpdateSensorValue(lv_obj_t *label, uint8_t valid,
                                      uint16_t value);
+static void APP_UI_UpdateSensorX10(lv_obj_t *label, uint8_t valid,
+                                   int32_t value_x10);
 /* USER CODE END FunctionPrototypes */
 
 
@@ -110,6 +112,40 @@ static void APP_UI_UpdateSensorValue(lv_obj_t *label, uint8_t valid,
     }
 }
 
+/**
+ * @brief 按1位小数刷新温湿度标签。
+ * @param label LVGL数值标签对象。
+ * @param valid 1表示数据有效，0表示传感器当前不可用。
+ * @param value_x10 放大10倍的定点数，308表示30.8。
+ * @return 无。
+ * @note 全程使用整数运算，避免在STM32上引入浮点格式化开销。
+ */
+static void APP_UI_UpdateSensorX10(lv_obj_t *label, uint8_t valid,
+                                   int32_t value_x10)
+{
+    int32_t abs_value;
+
+    if (valid == 0U)
+    {
+        lv_label_set_text(label, "NC");
+        return;
+    }
+
+    if (value_x10 < 0)
+    {
+        abs_value = -value_x10;
+        lv_label_set_text_fmt(label, "-%ld.%ld",
+                              (long)(abs_value / 10L),
+                              (long)(abs_value % 10L));
+    }
+    else
+    {
+        lv_label_set_text_fmt(label, "%ld.%ld",
+                              (long)(value_x10 / 10L),
+                              (long)(value_x10 % 10L));
+    }
+}
+
 /* ********************* Header_StartDefaultTask LVGL UI 交互任务************ */
 /**
   * @brief  defaultTask线程用于LVGL UI的更新，以及UI交互事件等
@@ -159,7 +195,7 @@ void StartDefaultTask(void *argument)
 
 	for(;;)
   {
-	/******************DTH11传感器UI更新*******************/
+	/******************SHT30温湿度UI更新*******************/
 	 // 检查队列中是否有数据（非阻塞，超时时间0）
 
 	
@@ -167,12 +203,12 @@ void StartDefaultTask(void *argument)
         {
 			            // 接收到数据，更新UI（控件名已在 test4 中重命名 *_num）
             /* 最终主题将单位拆成独立标签，此处只更新传感器数值。 */
-            APP_UI_UpdateSensorValue(guider_ui.screen_humidity_num,
-                                     recv_data.valid_mask & SENSOR_VALID_DHT11,
-                                     recv_data.humi);
-            APP_UI_UpdateSensorValue(guider_ui.screen_temperature_num,
-                                     recv_data.valid_mask & SENSOR_VALID_DHT11,
-                                     recv_data.temp);
+            APP_UI_UpdateSensorX10(guider_ui.screen_humidity_num,
+                                   recv_data.valid_mask & SENSOR_VALID_TEMP_HUMI,
+                                   (int32_t)recv_data.humi_x10);
+            APP_UI_UpdateSensorX10(guider_ui.screen_temperature_num,
+                                   recv_data.valid_mask & SENSOR_VALID_TEMP_HUMI,
+                                   (int32_t)recv_data.temp_x10);
         }
 
 		/* 设置页由生成代码按需创建，控件出现后再绑定一次业务回调。 */
@@ -187,12 +223,12 @@ void StartDefaultTask(void *argument)
 			ALARM_GetOutputSnapshot(&alarm_output);
 			custom_update_light_output_status(alarm_output.green_led_on != 0U);
 
-			APP_UI_UpdateSensorValue(guider_ui.screen_temperature_num,
-							 ui_snapshot.valid_mask & SENSOR_VALID_DHT11,
-							 ui_snapshot.temp);
-			APP_UI_UpdateSensorValue(guider_ui.screen_humidity_num,
-							 ui_snapshot.valid_mask & SENSOR_VALID_DHT11,
-							 ui_snapshot.humi);
+			APP_UI_UpdateSensorX10(guider_ui.screen_temperature_num,
+							 ui_snapshot.valid_mask & SENSOR_VALID_TEMP_HUMI,
+							 (int32_t)ui_snapshot.temp_x10);
+			APP_UI_UpdateSensorX10(guider_ui.screen_humidity_num,
+							 ui_snapshot.valid_mask & SENSOR_VALID_TEMP_HUMI,
+							 (int32_t)ui_snapshot.humi_x10);
 			lv_label_set_text_fmt(guider_ui.screen_smoke_num,
 							  "%u",
 							  (unsigned int)ui_snapshot.smoke_adc);

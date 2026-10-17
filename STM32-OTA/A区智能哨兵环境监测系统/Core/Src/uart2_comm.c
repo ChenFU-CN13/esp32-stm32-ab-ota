@@ -1,4 +1,4 @@
-#include "main.h"
+﻿#include "main.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
@@ -83,6 +83,8 @@ static BaseType_t UART2_Comm_StartDmaTx(uint8_t *data, uint16_t length);
 static void UART2_Comm_QueuePacket(const UART_Packet_t *packet);
 static void UART2_Comm_InitPacket(UART_Packet_t *packet, uint8_t type);
 static void UART2_Comm_LogFrame(const char *tag, const uint8_t *data, uint16_t length);
+static uint8_t UART2_Comm_TempX10ToU8(int16_t temp_x10);
+static uint8_t UART2_Comm_HumiX10ToU8(uint16_t humi_x10);
 
 /**
  * @brief 初始化 UART2 通讯模块，并启动唯一的 USART2 通讯任务。
@@ -446,10 +448,43 @@ static void UART2_Comm_HandleVersionRequest(void)
 }
 
 /**
+ * @brief 将1位小数温度转换为原UART2协议使用的无符号整数。
+ * @param temp_x10 放大10倍的温度值。
+ * @return 四舍五入后的0~255整数。
+ * @note 当前ESP32协议只有1字节温度，负温度按0发送，协议格式保持不变。
+ */
+static uint8_t UART2_Comm_TempX10ToU8(int16_t temp_x10)
+{
+    int32_t value;
+
+    if (temp_x10 <= 0)
+    {
+        return 0U;
+    }
+
+    value = ((int32_t)temp_x10 + 5L) / 10L;
+    return (value > 255L) ? 255U : (uint8_t)value;
+}
+
+/**
+ * @brief 将1位小数湿度转换为原UART2协议使用的整数。
+ * @param humi_x10 放大10倍的湿度值。
+ * @return 四舍五入并限制到0~100的整数湿度。
+ * @note STM32内部和UI仍保留1位小数，只在发给ESP32前降为整数。
+ */
+static uint8_t UART2_Comm_HumiX10ToU8(uint16_t humi_x10)
+{
+    uint32_t value;
+
+    value = ((uint32_t)humi_x10 + 5UL) / 10UL;
+    return (value > 100UL) ? 100U : (uint8_t)value;
+}
+
+/**
  * @brief 将原有 xUART2_TxQueue 的业务消息转换为统一的 0x55 八字节帧。
  * @param 无。
  * @return 无。
- * @note DHT11 一条消息拆成湿度(type=1)和温度(type=2)两帧，保持原任务调用方式不变。
+ * @note 温湿度消息拆成湿度(type=1)和温度(type=2)两帧，继续按整数发给ESP32。
  */
 static void UART2_Comm_QueueBusinessPackets(void)
 {
@@ -463,13 +498,13 @@ static void UART2_Comm_QueueBusinessPackets(void)
 
     switch (msg.type)
     {
-        case MSG_TYPE_DHT11:
+        case MSG_TYPE_TEMP_HUMI:
             UART2_Comm_InitPacket(&packet, 0x01U);
-            packet.data[0] = msg.data.dht11_data.humi;
+            packet.data[0] = UART2_Comm_HumiX10ToU8(msg.data.temp_humi_data.humi_x10);
             UART2_Comm_QueuePacket(&packet);
 
             UART2_Comm_InitPacket(&packet, 0x02U);
-            packet.data[0] = msg.data.dht11_data.temp;
+            packet.data[0] = UART2_Comm_TempX10ToU8(msg.data.temp_humi_data.temp_x10);
             UART2_Comm_QueuePacket(&packet);
             break;
 

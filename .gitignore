@@ -4,6 +4,12 @@
 *.7z
 *_backup/
 *_bak/
+*_backed/
+*_bck*/
+draft_*/
+tmp/
+*.Bak
+build_*.log
 
 # ESP-IDF 编译输出
 ESP32S3-OTA/build/
@@ -51,6 +57,10 @@ Thumbs.db
 .env.*
 secrets.h
 credentials.h
+
+# 本地参考资料与调试截图归档（发布时按需单独挑选素材）
+STM32-OTA/doc/*.pdf
+STM32-OTA/doc/AIchat.txt
 
 # AI 对话记录 / 临时笔记
 AIchat.txt
