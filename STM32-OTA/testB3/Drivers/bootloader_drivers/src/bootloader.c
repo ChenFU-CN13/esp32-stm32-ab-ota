@@ -12,7 +12,7 @@
 
 
 /* 跳转目标函数指针变量：在 Load_A 中赋值为 A 区 APP 的复位向量 */
-load_a LOAD_A;
+load_a LOAD_A;		//定义一个函数指针变量 LOAD_A，类型是 load_a
 
 /* IWDG由32kHz标称LSI驱动：/64、Reload=2499时名义约5秒。
  * STM32F407数据手册给出的LSI范围为17~47kHz，实际约3.4~9.4秒。 */
@@ -36,12 +36,13 @@ HAL_StatusTypeDef Bootloader_WatchdogInit(void)
 {
 	uint32_t start_tick;
 
+	/*先判断MCU 这次启动，是不是因为 IWDG 看门狗超时导致的复位。*/
 	s_iwdg_reset_detected = (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET) ? 1U : 0U;
-	__HAL_RCC_CLEAR_RESET_FLAGS();
-	__HAL_DBGMCU_FREEZE_IWDG();
+	__HAL_RCC_CLEAR_RESET_FLAGS();	//清除复位标志
+	__HAL_DBGMCU_FREEZE_IWDG();		//开启这个看门狗调试功能后，在keil选择断电调试时，CPU虽然停止工作，但是不会因为CPU没有及时喂狗而导致单片机不断复位
 
-	IWDG->KR = 0xCCCCU;
-	IWDG->KR = 0x5555U;
+	IWDG->KR = 0xCCCCU;			//相当于HAL 初始化 HAL_IWDG_Init() 内部会完成类似操作。
+	IWDG->KR = 0x5555U;			//解除 IWDG 的 PR、RLR 寄存器写保护，允许修改分频值和重载值。
 	IWDG->PR = BOOTLOADER_IWDG_PRESCALER;
 	IWDG->RLR = BOOTLOADER_IWDG_RELOAD;
 
@@ -54,7 +55,7 @@ HAL_StatusTypeDef Bootloader_WatchdogInit(void)
 		}
 	}
 
-	IWDG->KR = 0xAAAAU;
+	IWDG->KR = 0xAAAAU;			//喂狗，相当于HAL_IWDG_Refresh(&hiwdg);
 	return HAL_OK;
 }
 
@@ -64,7 +65,7 @@ HAL_StatusTypeDef Bootloader_WatchdogInit(void)
  */
 void Bootloader_WatchdogRefresh(void)
 {
-	IWDG->KR = 0xAAAAU;
+	IWDG->KR = 0xAAAAU;		//相当于HAL_IWDG_Refresh(&hiwdg);
 }
 
 /**
@@ -157,12 +158,27 @@ void Load_A(uint32_t address)
         U1_Printf("Acode stack address: 0x%08X\r\n", *(uint32_t*)address);
         U1_Printf("Reset vector in Acode: 0x%08X\r\n", *(uint32_t*)(address+4));
 
-		__disable_irq();
-		SCB->VTOR = address;
-		MSR_SP(*(uint32_t*)address);
+		__disable_irq();				//关闭全局中断，避免影响，在跳转A区后要重新开启！
+
+		SCB->VTOR = address;			//VTOR寄存器用于告诉CPU中断向量表存放在内存中哪个位置
+		//这里要指向A区的起始地址0x08010000，如果不改的话，CPU如果发生中断，需要去中断向量表中进入中断，会从
+		//默认的0x0800000（B区）开始找，这样就一定会跑飞程序
+
+		MSR_SP(*(uint32_t*)address);	//这里就是改堆栈指针SP，作用是：把“临时存放数据的栈从B区切换到A区”
+		//去 0x08010000 读4个字节 → 得到 A区向量表第1个字 = A区初始栈顶（比如0x20005000）
+
 		LOAD_A = (load_a)*(uint32_t*)(address+4);
-		BootLoader_Clear();
+		//将A区的复位向量地址对应的值(还要强转为load_a，不然数据类型不一样)，当做函数地址赋值给LOAD_A
+		//注意：这里是读取向量地址对应的值，而且是这个值刚刚好是 系统复位中断函数的地址；
+		//不要认为是把这个向量地址直接赋值给LOAD_A，这个是两码事
+
+		BootLoader_Clear();				//卸载B区环境
+
 		LOAD_A();
+		//这里是改PC指针（程序计数器）：“把执行位置从B区跳到A区的Reset_Handler中”
+		//因为函数名等于地址，在上一个步骤中已经是把系统复位中断函数的地址赋值给它
+		//因此LOAD_A();此时就类似于HAL_NVIC_reset();
+
     }
 	else
 	{

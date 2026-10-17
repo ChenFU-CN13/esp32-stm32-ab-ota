@@ -102,8 +102,6 @@ int main(void)
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_USART2_UART_Init();
-  MX_CRC_Init();
-  /* USER CODE BEGIN 2 */
 	U1BootLoader_Init();
   if (Bootloader_WatchdogInit() == HAL_OK)
   {

@@ -7,8 +7,7 @@
 #include "freertos/task.h"
 #include "onenet_dm.h"
 #include "myuart.h"
+#include "credentials.h"
 
 #define TAG     "main"
 #define EV_WIFI_CONNECTED_BIT           (1<<0)
-#define DEFAULT_SSID        "a1"
-#define DEFAULT_PASSWORD    "KYWH8888"

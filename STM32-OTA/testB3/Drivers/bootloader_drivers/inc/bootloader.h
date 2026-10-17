@@ -73,7 +73,7 @@
  * 用于跳转到A区APP的复位中断向量
  * 函数指针指向APP的复位中断处理函数入口地址
  */
-typedef void (*load_a) (void);
+ typedef void (*load_a) (void);	//定义了一个无参数，无返回值名为load_a的指针类型
 
 
 /**

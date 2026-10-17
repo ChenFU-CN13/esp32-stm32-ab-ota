@@ -13,13 +13,13 @@ extern "C" {
 #include "cmsis_os.h"
 #include <stdint.h>
 
-#define SENSOR_VALID_DHT11    (1U << 0)  /**< 温湿度数据有效 */
-#define SENSOR_VALID_LIGHT    (1U << 2)  /**< 光照数据有效 */
+#define SENSOR_VALID_TEMP_HUMI (1U << 0) /**< 温湿度数据有效 */
+#define SENSOR_VALID_LIGHT     (1U << 2) /**< 光照数据有效 */
 
 typedef struct
 {
-    uint8_t temp;
-    uint8_t humi;
+    int16_t temp_x10;        /**< 温度放大10倍，308表示30.8摄氏度 */
+    uint16_t humi_x10;       /**< 湿度放大10倍，646表示64.6%RH */
     uint8_t iot_connected;
     uint8_t fan_pct;
     uint8_t valid_mask;      /**< SENSOR_VALID_xxx组合，0表示尚无有效传感器数据 */
@@ -49,7 +49,7 @@ typedef struct
 
 typedef enum
 {
-    MSG_TYPE_DHT11 = 0,
+    MSG_TYPE_TEMP_HUMI = 0,
     MSG_TYPE_LED,
     MSG_TYPE_BUZZER,
     MSG_TYPE_FAN,
@@ -62,7 +62,7 @@ typedef struct
     UART_MsgType_t type;
     union
     {
-        sensor_Data_t dht11_data;
+        sensor_Data_t temp_humi_data;
         LED_Cmd_t led_cmd;
         buzzer_Cmd_t buzzer_cmd;
         uint8_t fan_pct;

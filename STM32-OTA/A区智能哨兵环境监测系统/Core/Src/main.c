@@ -1,4 +1,4 @@
-
+﻿
 #include "main.h"
 #include "cmsis_os.h"
 #include "gpio.h"
@@ -91,9 +91,23 @@ void APP_Watchdog_Refresh(void)
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
+/* USER CODE BEGIN 1 */
 
-  /* USER CODE END 1 */
+    /*
+    * 正式OTA模式下，APP固定运行在0x08010000。
+    * 必须在HAL_Init()前切换向量表，避免HAL初始化期间产生中断时跳回Bootloader向量表。
+    */
+    SCB->VTOR = FLASH_BASE | 0x00010000U;
+    __DSB();
+    __ISB();
+
+    /*
+    * Bootloader已经启动IWDG，跳转APP后IWDG不会停止。
+    * APP必须尽早喂一次狗，防止后续时钟和外设初始化时间过长导致复位。
+    */
+    APP_Watchdog_Refresh();
+
+/* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -101,21 +115,13 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-		/* Bootloader跳转后IWDG仍在运行，先刷新再做时钟与外设初始化。 */
-//		APP_Watchdog_Refresh();
-//		SCB->VTOR = 0x08010000; // A区APP自己告诉CPU向量表起始地址
-//	    __enable_irq(); // 关键：重新开启全局中断
-	/*当前STM32跳转到A区还应该 一开始发送版本号给ESP32，用于上报到onenet平台*/
-	
-	/*  新增调试模式，跳过B区程序，加快调试速度   */
-	#ifndef NO_BOOT_MODE
-    SCB->VTOR = FLASH_BASE | 0x010000;  /* 原代码：Bootloader 模式下，APP 在 0x08010000 */
-	#else
-    SCB->VTOR = FLASH_BASE | 0x000000;  /* NoBoot 模式下，APP 就在 0x08000000 */  
-	#endif
-	/*  新增调试模式，跳过B区程序，加快调试速度    */
-	
-	
+
+  /*
+   * Bootloader跳转前关闭了全局中断，跳转到APP后该状态不会自动恢复。
+   * 此时APP向量表和HAL基础环境已经就绪，可以重新开启全局中断。
+   */
+  __enable_irq();
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -128,10 +134,11 @@ int main(void)
  
 	MX_GPIO_Init();
 	APP_Watchdog_Refresh();     //看门狗喂狗
-  delay_init(); 						
-  usart_init(115200);//注意:这个是串口1 
+	delay_init();
+	usart_init(115200);//注意:这个是串口1
 	USART2_DMA1_Init();
 	USART2_Init(115200);
+	USART3_Init(9600);
 	APP_Watchdog_Refresh();
 	sram_init();
 	FAN_PWM_Init();

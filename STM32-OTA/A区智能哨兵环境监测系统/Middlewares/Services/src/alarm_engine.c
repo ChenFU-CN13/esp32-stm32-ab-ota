@@ -4,25 +4,31 @@
 #include "task.h"
 #include <string.h>
 
+/* 去抖周期数：AlarmEngineTask 每 200ms 调一次，10 次 = 2 秒确认 */
 #define ALARM_DEBOUNCE_CYCLES       10U
+/* 烟雾报警时红灯闪烁半周期，250ms 亮 + 250ms 灭 = 2Hz */
 #define ALARM_RED_HALF_PERIOD_MS    250UL
+/* 烟雾报警时蜂鸣器周期 */
 #define ALARM_BUZZER_PERIOD_MS      1000UL
+/* 蜂鸣器每个周期内的鸣叫时长 */
 #define ALARM_BUZZER_ON_MS          200UL
 
-static alarm_input_t g_alarm_input;
-static alarm_output_t g_alarm_output;
-static uint8_t s_smoke_active = 0U;
-static uint8_t s_temp_active = 0U;
-static uint8_t s_humi_active = 0U;
-static uint8_t s_light_on = 0U;
-static uint8_t s_smoke_on_count = 0U;
-static uint8_t s_smoke_off_count = 0U;
-static uint8_t s_temp_on_count = 0U;
-static uint8_t s_temp_off_count = 0U;
-static uint8_t s_humi_on_count = 0U;
-static uint8_t s_humi_off_count = 0U;
-static uint8_t s_light_low_count = 0U;
-static uint8_t s_light_high_count = 0U;
+static alarm_input_t g_alarm_input;         /**< 报警引擎输入快照，各传感器任务写入 */
+static alarm_output_t g_alarm_output;       /**< 报警引擎输出快照，AlarmEngineTask 计算并发布 */
+/* 以下为去抖后的稳定状态标志，1=条件持续满足 */
+static uint8_t s_smoke_active = 0U;         /**< 烟雾报警去抖后状态 */
+static uint8_t s_temp_active = 0U;          /**< 温度超限去抖后状态 */
+static uint8_t s_humi_active = 0U;          /**< 湿度超限去抖后状态 */
+static uint8_t s_light_on = 0U;             /**< 照明开关滞回后状态 */
+/* 以下为各条件的连续计数器，达到 ALARM_DEBOUNCE_CYCLES 才翻转状态 */
+static uint8_t s_smoke_on_count = 0U;       /**< 烟雾连续超阈值计数 */
+static uint8_t s_smoke_off_count = 0U;      /**< 烟雾连续正常计数 */
+static uint8_t s_temp_on_count = 0U;        /**< 温度连续超限计数 */
+static uint8_t s_temp_off_count = 0U;       /**< 温度连续正常计数 */
+static uint8_t s_humi_on_count = 0U;        /**< 湿度连续超限计数 */
+static uint8_t s_humi_off_count = 0U;       /**< 湿度连续正常计数 */
+static uint8_t s_light_low_count = 0U;      /**< 光照连续低于下限计数 */
+static uint8_t s_light_high_count = 0U;     /**< 光照连续高于上限计数 */
 
 static void ALARM_UpdateDebouncedState(uint8_t condition,
                                        uint8_t *state,
@@ -46,20 +52,22 @@ static void ALARM_UpdateDebouncedState(uint8_t condition,
 {
     if (condition != 0U)
     {
+        /* 条件成立：on 计数器递增并饱和，同时清零 off 计数器（任何一次翻转都重置对侧计数） */
         *on_count = ALARM_IncrementSaturated(*on_count);
         *off_count = 0U;
         if (*on_count >= ALARM_DEBOUNCE_CYCLES)
         {
-            *state = 1U;
+            *state = 1U;    /* 连续 N 次成立 → 去抖后状态置为"激活" */
         }
     }
     else
     {
+        /* 条件不成立：off 计数器递增并饱和，同时清零 on 计数器 */
         *off_count = ALARM_IncrementSaturated(*off_count);
         *on_count = 0U;
         if (*off_count >= ALARM_DEBOUNCE_CYCLES)
         {
-            *state = 0U;
+            *state = 0U;    /* 连续 N 次不成立 → 去抖后状态置为"解除" */
         }
     }
 }
@@ -72,7 +80,7 @@ static void ALARM_UpdateDebouncedState(uint8_t condition,
  */
 static uint8_t ALARM_IncrementSaturated(uint8_t value)
 {
-    return (value < ALARM_DEBOUNCE_CYCLES) ? (uint8_t)(value + 1U) : value;
+    return (value < ALARM_DEBOUNCE_CYCLES) ? (uint8_t)(value + 1U) : value;  /* 到上限后停止递增，防止长时间运行溢出 */
 }
 
 /**
@@ -121,14 +129,19 @@ void ALARM_UpdateInput(const alarm_input_t *input)
  * @brief 更新温湿度输入。
  * @param temp_x10 温度乘 10。
  * @param humi 湿度百分数。
+ * @param valid 1表示本次温湿度有效，0表示传感器当前不可用。
  * @return 无。
- * @note 只修改对应字段。
+ * @note 无效时不覆盖最后一次数值，只清有效标志，避免旧数据继续控制风扇。
  */
-void ALARM_UpdateDht(int16_t temp_x10, int16_t humi)
+void ALARM_UpdateTempHumi(int16_t temp_x10, int16_t humi, uint8_t valid)
 {
     taskENTER_CRITICAL();
-    g_alarm_input.temp_x10 = temp_x10;
-    g_alarm_input.humi = humi;
+    if (valid != 0U)
+    {
+        g_alarm_input.temp_x10 = temp_x10;
+        g_alarm_input.humi = humi;
+    }
+    g_alarm_input.temp_humi_valid = (valid != 0U) ? 1U : 0U;
     taskEXIT_CRITICAL();
 }
 
@@ -183,11 +196,15 @@ void ALARM_Run(uint32_t now_ms,
     taskENTER_CRITICAL();
     input = g_alarm_input;
     taskEXIT_CRITICAL();
-    CFG_GetSnapshot(&config);
+    CFG_GetSnapshot(&config);   /* 读取当前用户配置阈值快照 */
 
+    /* 计算原始条件：直接与阈值比较，尚未去抖 */
     smoke_condition = (input.smoke_adc > config.smoke_adc_thr) ? 1U : 0U;
-    temp_condition = (input.temp_x10 > config.temp_high_x10) ? 1U : 0U;
-    humi_condition = (input.humi > config.humi_high) ? 1U : 0U;
+    temp_condition = ((input.temp_humi_valid != 0U) &&
+                      (input.temp_x10 > config.temp_high_x10)) ? 1U : 0U;
+    humi_condition = ((input.temp_humi_valid != 0U) &&
+                      (input.humi > config.humi_high)) ? 1U : 0U;
+    /* 分别对三个条件执行双向去抖 */
     ALARM_UpdateDebouncedState(smoke_condition,
                                &s_smoke_active,
                                &s_smoke_on_count,
@@ -200,15 +217,17 @@ void ALARM_Run(uint32_t now_ms,
                                &s_humi_active,
                                &s_humi_on_count,
                                &s_humi_off_count);
+    /* 环境告警 = 温度超限 OR 湿度超限（烟雾独立处理，优先级更高） */
     environment_active = ((s_temp_active != 0U) || (s_humi_active != 0U)) ? 1U : 0U;
 
+    /* 光照滞回控制：用 light_low/light_high 两个阈值避免临界抖动 */
     if (input.lux < config.light_low)
     {
         s_light_low_count = ALARM_IncrementSaturated(s_light_low_count);
         s_light_high_count = 0U;
         if (s_light_low_count >= ALARM_DEBOUNCE_CYCLES)
         {
-            s_light_on = 1U;
+            s_light_on = 1U;    /* 连续低于下限 → 开照明 */
         }
     }
     else if (input.lux > config.light_high)
@@ -217,30 +236,35 @@ void ALARM_Run(uint32_t now_ms,
         s_light_low_count = 0U;
         if (s_light_high_count >= ALARM_DEBOUNCE_CYCLES)
         {
-            s_light_on = 0U;
+            s_light_on = 0U;    /* 连续高于上限 → 关照明 */
         }
     }
     else
     {
+        /* 光照处于滞回区间内，保持当前状态 */
         s_light_low_count = 0U;
         s_light_high_count = 0U;
     }
 
+    /* 清零输出后按优先级填充 */
     memset(&output, 0, sizeof(output));
     output.green_led_on = ((illumination_enabled != 0U) && (s_light_on != 0U)) ? 1U : 0U;
+
     if (s_smoke_active != 0U)
     {
+        /* === 烟雾报警（最高优先级）=== */
         output.alarm_level = 2U;
-        output.fan_pct = 100U;
-        output.red_led_on = (((now_ms / ALARM_RED_HALF_PERIOD_MS) & 0x01UL) == 0UL) ? 1U : 0U;
-        output.buzzer_on = ((now_ms % ALARM_BUZZER_PERIOD_MS) < ALARM_BUZZER_ON_MS) ? 1U : 0U;
+        output.fan_pct = 100U;                          /* 风扇全速排烟 */
+        output.red_led_on = (((now_ms / ALARM_RED_HALF_PERIOD_MS) & 0x01UL) == 0UL) ? 1U : 0U;  /* 红灯 2Hz 闪烁 */
+        output.buzzer_on = ((now_ms % ALARM_BUZZER_PERIOD_MS) < ALARM_BUZZER_ON_MS) ? 1U : 0U; /* 蜂鸣器 1s 周期响 200ms */
     }
     else
     {
+        /* === 无烟雾：处理温湿度环境告警和手动控制 === */
         output.alarm_level = (environment_active != 0U) ? 1U : 0U;
-        output.fan_pct = (environment_active != 0U) ? 80U : 0U;
-        output.red_led_on = (manual_red_on != 0U) ? 1U : 0U;
-        output.buzzer_on = (manual_buzzer_on != 0U) ? 1U : 0U;
+        output.fan_pct = (environment_active != 0U) ? 80U : 0U;   /* 温湿度告警时风扇 80% 转速 */
+        output.red_led_on = (manual_red_on != 0U) ? 1U : 0U;     /* 红灯由手动开关控制 */
+        output.buzzer_on = (manual_buzzer_on != 0U) ? 1U : 0U;   /* 蜂鸣器由手动开关控制 */
     }
 
     taskENTER_CRITICAL();

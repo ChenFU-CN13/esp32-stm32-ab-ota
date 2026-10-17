@@ -12,17 +12,7 @@
 #include "onenet_token.h"
 #include "onenet_dm.h"
 #include "onenet_ota.h"
-
-
-
-//产品ID
-#define  ONENET_PRODUCT_ID  "EYK5Xu3mRi"
-
-//产品秘钥
-#define  ONENET_ACCESS_KEY  "4YUdM5dvLfX5i3/fnY8D1xeX25MldUGjG1Xf39ndERM="
-
-//设备名称  设备和产品是上下级关系，通一个产品的设备上面两个一样，但是设备名称不一样
-#define ONENET_DEVICE_NAME  "STM32C8T6"
+#include "credentials.h"
 
 #define TM_EXPIRE_TIME 2074855187
 

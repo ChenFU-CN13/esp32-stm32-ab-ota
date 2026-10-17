@@ -162,7 +162,7 @@ void OTA_Init(void)
 	U1_Printf("A区起始地址: 0x%08X\r\n", FLASH_ACode_STARTADDR);
 	U1_Printf("========================================\r\n");
 
-	/* 仅在本次上电的首次初始化执行恢复；协议ABORT复位上下文不能重复触发启动恢复。 */
+	/* 仅在本次上电的首次初始化执行恢复；确保上电后只执行一次 Flash/回滚存储的状态恢复，防止协议层面复位上下文时重复触发。 */
 	if (!s_storage_initialized)
 	{
 		s_storage_initialized = 1U;

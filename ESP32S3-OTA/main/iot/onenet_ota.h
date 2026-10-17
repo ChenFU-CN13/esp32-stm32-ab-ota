@@ -6,7 +6,7 @@
  * @note  1 = 完全停用 OTA：不创建Manager任务、不做5分钟轮询、所有OTA接口返回空成功；
  *        0 = 恢复正常 OTA 升级流程
  */
-#define ONENET_OTA_DISABLED             1    // ← 调试APP=1，做OTA时改回0
+#define ONENET_OTA_DISABLED             0    // ← 调试APP=1，做OTA时改回0
 
 #include "esp_err.h"
 #include <stdint.h>

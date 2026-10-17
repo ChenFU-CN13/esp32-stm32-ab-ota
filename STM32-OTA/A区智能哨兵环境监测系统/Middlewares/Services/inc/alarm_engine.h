@@ -7,21 +7,28 @@
 extern "C" {
 #endif
 
+/**
+ * @brief 报警引擎输入数据结构，由各传感器任务写入
+ */
 typedef struct
 {
-    uint16_t smoke_adc;
-    int16_t temp_x10;
-    int16_t humi;
-    uint16_t lux;
+    uint16_t smoke_adc;         /**< 烟雾传感器 ADC 原始值（12 位） */
+    int16_t  temp_x10;          /**< 温度值乘以 10，例如 25.5°C 存为 255 */
+    int16_t  humi;              /**< 湿度百分比，单位 % */
+    uint8_t  temp_humi_valid;   /**< 温湿度数据有效标志，1=有效，0=传感器异常 */
+    uint16_t lux;               /**< 光照强度，单位 lux */
 } alarm_input_t;
 
+/**
+ * @brief 报警引擎输出数据结构，由执行器任务读取并驱动硬件
+ */
 typedef struct
 {
-    uint8_t red_led_on;
-    uint8_t buzzer_on;
-    uint8_t fan_pct;
-    uint8_t green_led_on;
-    uint8_t alarm_level;
+    uint8_t red_led_on;     /**< 红灯开关，1=亮 */
+    uint8_t buzzer_on;      /**< 蜂鸣器开关，1=响 */
+    uint8_t fan_pct;        /**< 风扇占空比，0~100 百分比 */
+    uint8_t green_led_on;   /**< 绿灯（照明）开关，1=亮 */
+    uint8_t alarm_level;    /**< 报警等级：0=正常，1=温湿度超限，2=烟雾报警 */
 } alarm_output_t;
 
 /**
@@ -44,10 +51,11 @@ void ALARM_UpdateInput(const alarm_input_t *input);
  * @brief 更新温湿度输入。
  * @param temp_x10 温度乘 10。
  * @param humi 湿度百分数。
+ * @param valid 1表示本次温湿度有效，0表示传感器当前不可用。
  * @return 无。
- * @note 用于 DHT11Task，避免覆盖其他传感器字段。
+ * @note valid为0时保留旧数值供排查，但报警逻辑不会继续使用旧数据。
  */
-void ALARM_UpdateDht(int16_t temp_x10, int16_t humi);
+void ALARM_UpdateTempHumi(int16_t temp_x10, int16_t humi, uint8_t valid);
 
 /**
  * @brief 更新烟雾 ADC 输入。

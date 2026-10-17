@@ -74,13 +74,21 @@ void U1RXBootLoader_IDLE_CallBack(UART_HandleTypeDef *huart)
 	}
 
 	
+
+	/*下面意思是：
+	决定“下一次 DMA 接收的数据应该从 U1_RX_Buffer 的哪个位置开始存”。
+	如果尾部剩余空间还能放下 256 字节（因为一次接收最大是256），就接着往后写；否则回到数组开头重新写。*/
 	if(U1RX_Bufffer_Size - UCB_CB.U1RX_Counter >= 256)	//判断缓冲区数组是否满，若没满则更新start指针位置		
 	{
         UCB_CB.URxDataIn->start = &U1_RX_Buffer[UCB_CB.U1RX_Counter];
 	}
 	else
 	{											//如果满了，开启RX缓冲区回卷
-		UCB_CB.URxDataIn->start = U1_RX_Buffer;
+
+		/*比如假设U1RX_Counter = 1900，也就是说写入到Buffer[1900]
+		那么2048 - 1900 = 148，又因为一次最大接收256字节，假设来200字节，则此时就会进入这个else分支*/
+		UCB_CB.URxDataIn->start = U1_RX_Buffer;//注意数组名，相当于&U1_RX_Buffer[0]
+		/*也就是表示，来的200字节即将从开头进行写入，也就是回卷*/
 		UCB_CB.U1RX_Counter = 0;
 	}
 
