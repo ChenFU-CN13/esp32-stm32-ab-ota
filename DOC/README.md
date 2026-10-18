@@ -32,7 +32,6 @@
 |---|---|
 | [STM32 A区 APP 开发与实机验证记录](development-notes/STM32_A区APP开发与实机验证记录.md) | APP 侧当前状态、实机问题和后续建议。 |
 | [APP 功能扩展实施计划](development-notes/APP功能扩展实施计划.md) | APP 扩展任务拆分和实施过程。 |
-| [历史项目进度与验证记录](development-notes/项目进度与验证记录.md) | 长期开发日志，包含已经被当前 README 覆盖的旧阶段结论。 |
 
 ## 5. 图片素材
 

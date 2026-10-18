@@ -70,3 +70,6 @@ AIchat.txt
 local_materials/
 *.mp4
 
+# 本地项目进度记录，不对外公开
+/DOC/development-notes/项目进度与验证记录.md
+
