@@ -292,7 +292,6 @@ bootloader_OTA/
 - [故障复盘](DOC/debugging/README.md)
 - [实机验证记录](DOC/verification/README.md)
 - [STM32 APP 开发与验证记录](DOC/development-notes/STM32_A区APP开发与实机验证记录.md)
-- [历史项目进度记录](DOC/development-notes/项目进度与验证记录.md)
 
 ## 许可说明
 
