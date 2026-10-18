@@ -225,6 +225,7 @@ static esp_err_t onenet_ota_http_connect(const char* url,esp_http_client_method_
     {
         .url = url,
         .event_handler = http_client_event_handler,
+        .timeout_ms = 10000,//超时时间10秒
     };
     //初始化结构体
     esp_http_client_handle_t http_client = esp_http_client_init(&config);	//初始化http连接
