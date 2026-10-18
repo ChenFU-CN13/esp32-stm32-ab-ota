@@ -65,3 +65,8 @@ STM32-OTA/doc/AIchat.txt
 # AI 对话记录 / 临时笔记
 AIchat.txt
 
+# 本地整理资料（不公开、不提交）
+.trae/
+local_materials/
+*.mp4
+

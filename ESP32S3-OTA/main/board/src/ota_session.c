@@ -58,15 +58,19 @@ esp_err_t serial_send_firmware(uart_port_t uart_num, const char* firmware_path, 
 {
     ESP_LOGI(TAG, "Starting firmware transmission via serial");
 
-    /*===== 旧方案（已废弃，注释保留对比）=====
+    /*
+     * 历史错误实现，仅用于故障复盘，禁止重新启用。
+     * 这段代码从修复前的myuart.c恢复，使用#if 0确保不会进入编译结果。
+     */
+#if 0
+    /* 暂停串口接收任务
+     * 原设计意图：OTA独占UART，避免业务帧和升级ACK相互干扰。
+     * 实际问题：接收任务可能在持有UART驱动内部rx_mux时被强制冻结，
+     * 后续uart_flush_input()等待同一把锁，第二轮OTA永久卡死。
+     */
     vTaskSuspend(recive_buff1_handle);
     ESP_LOGI(TAG, "Suspended UART receive task");
-     * 死因：挂起时接收任务可能正持有UART驱动内部的rx_mux互斥锁
-     * （阻塞在uart_read_bytes里消化积压事件），被冻结后锁永不释放，
-     * 本任务后面调uart_flush_input()要无限期等这把锁 → Step 2永久卡死。
-     * vTaskSuspend的致命缺陷：你无法控制任务被冻结在代码的哪一行，
-     * 冻在持锁区间就是死锁。
-     *=======================================*/
+#endif
 
     /* 新方案：标志门控。接收任务继续活着跑事件循环，但OTA期间
      * 只消费事件不碰ringbuffer，既不抢数据也不抢锁 */
@@ -276,13 +280,14 @@ cleanup:
         send_abort(uart_num);
     }
 
-    /*===== 旧方案（已废弃，注释保留对比）=====
+    /*
+     * 历史错误实现的收尾部分，仅用于与下方“标志门控+队列清理”对比。
+     * 恢复任务后，旧UART_DATA事件仍会继续进入接收路径。
+     */
+#if 0
     vTaskResume(recive_buff1_handle);
     ESP_LOGI(TAG, "Resumed UART receive task");
-     * 问题：任务恢复后要消化挂起期间积压的过期UART_DATA事件，
-     * 拿过期事件读空ringbuffer会持锁阻塞1秒，还可能解析出垃圾
-     * 数据误发0xFF重发请求给STM32。
-     *=======================================*/
+#endif
 
     /* 新方案：解锁三件套
      * 1. 清标志：让接收任务恢复正常处理（顺序必须在send_abort之后，
