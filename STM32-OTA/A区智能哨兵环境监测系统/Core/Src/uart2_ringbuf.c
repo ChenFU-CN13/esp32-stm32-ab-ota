@@ -37,13 +37,13 @@ void UART2_RingBuffer_Init(void)
  */
 uint8_t UART2_RingBuffer_PushFromISR(uint8_t byte)
 {
-    uint8_t write_index = s_uart2_ring_buffer.write_index;
-    uint8_t next_index = (uint8_t)((write_index + 1U) & (UART2_RINGBUF_SIZE - 1U));
+    uint8_t write_index = s_uart2_ring_buffer.write_index;//读取当前写索引
+    uint8_t next_index = (uint8_t)((write_index + 1U) & (UART2_RINGBUF_SIZE - 1U));//这里是下一个写索引，因为是环形缓冲区，所以要与缓冲区大小-1进行与与操作，实现回绕效果
 
     /* 留一个空槽区分“空”和“满”，满时丢弃新字节。 */
-    if (next_index == s_uart2_ring_buffer.read_index)
+    if (next_index == s_uart2_ring_buffer.read_index)//判满，为什么下一个写索引等于读索引，说明缓冲区已满呢，是因为下一个写索引是下一个空槽，而读索引是当前读取的槽，所以如果下一个写索引等于读索引，说明缓冲区已满，不能写入新字节
     {
-        s_uart2_ring_buffer.overflow_count++;
+        s_uart2_ring_buffer.overflow_count++;//缓冲区已满，丢弃新字节
         return 0U;
     }
 
@@ -70,16 +70,16 @@ uint8_t UART2_RingBuffer_Pop(uint8_t *byte)
         return 0U;
     }
 
-    read_index = s_uart2_ring_buffer.read_index;
-    if (read_index == s_uart2_ring_buffer.write_index)
+    read_index = s_uart2_ring_buffer.read_index;//取当前读索引
+    if (read_index == s_uart2_ring_buffer.write_index)//这里判断是否有数据可读，如果读索引等于写索引，说明缓冲区为空，没有数据可读
     {
         return 0U;
     }
 
-    *byte = s_uart2_ring_buffer.data[read_index];
+    *byte = s_uart2_ring_buffer.data[read_index];//读取当前读索引指向的字节
     __DMB();    /* 先取走数据，再释放该缓冲槽。 */
     s_uart2_ring_buffer.read_index =
-        (uint8_t)((read_index + 1U) & (UART2_RINGBUF_SIZE - 1U));
+        (uint8_t)((read_index + 1U) & (UART2_RINGBUF_SIZE - 1U));//更新读索引，指向下一个槽
 
     return 1U;
 }

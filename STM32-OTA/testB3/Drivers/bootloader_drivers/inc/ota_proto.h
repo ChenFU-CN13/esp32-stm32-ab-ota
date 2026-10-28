@@ -83,19 +83,26 @@
  *       例如: 固件大小0x00012345，存储为：00 01 23 45
  * @note 版本号为ASCII字符串，如 "v1.0.2"，不足8字节用0x00填充
  */
-#define OTA_SIMPLE_FRAME_LEN            3
-#define OTA_INFO_FRAME_LEN              25
+#define OTA_SIMPLE_FRAME_LEN            3       /* 简单命令帧固定长度：|0x66|命令字|0xBB| */
+#define OTA_INFO_FRAME_LEN              25      /* 固件信息帧固定长度（详见上方帧格式说明） */
 #define OTA_DATA_FRAME_HEADER_LEN       8       // 数据帧真头部：包头1+命令1+序号2+长度4=8字节（CRC与包尾另算）
 #define OTA_DATA_FRAME_TAIL_LEN         5       // 数据帧尾部：CRC32(4)+包尾(1)=5字节
-#define OTA_DATA_PAYLOAD_LEN            1024
+#define OTA_DATA_PAYLOAD_LEN            1024    /* 单个数据帧(0x06)数据域最大字节数，
+												   固件按此大小切包，末包可能不足1024 */
 #define OTA_DATA_FRAME_MAX_LEN          (OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_PAYLOAD_LEN + OTA_DATA_FRAME_TAIL_LEN)
+														/* 数据帧最大总长 = 8+1024+5 = 1037字节；
+														   ota_core.c的ota_rx_buffer按此值+4余量分配 */
 
-#define OTA_VERSION_LEN                 8
+#define OTA_VERSION_LEN                 8       /* 协议中版本号字段宽度(ASCII)，不足部分以0x00填充；
+												   同时是OTA_Context_t.version数组的长度 */
 
-#define OTA_WAIT_START_TIMEOUT_MS       15000U
-#define OTA_WAIT_INFO_TIMEOUT_MS        15000U
-#define OTA_WAIT_DATA_TIMEOUT_MS        15000U
-#define OTA_WAIT_END_TIMEOUT_MS         10000U
+/* 以下为各接收阶段的"无帧超时"上限（由OTA_SetStageDeadline/OTA_IsStageTimeout维护）：
+ * 注意WAIT_DATA是包间超时——每正确收到一包数据帧就重新计时，不是整份固件的传输总时长。
+ * 超时后：WAIT_START退回IDLE；WAIT_INFO/WAIT_DATA/WAIT_END触发回滚恢复旧镜像。 */
+#define OTA_WAIT_START_TIMEOUT_MS       15000U  /* 等待三次握手(0x04)超时，超时退回IDLE */
+#define OTA_WAIT_INFO_TIMEOUT_MS        15000U  /* 等待固件信息帧(0x05)超时，超时触发回滚 */
+#define OTA_WAIT_DATA_TIMEOUT_MS        15000U  /* 相邻两包数据帧(0x06)的最大间隔，超时触发回滚 */
+#define OTA_WAIT_END_TIMEOUT_MS         10000U  /* 收满数据后等待结束命令(0x07)超时，超时触发回滚 */
 
 /**
  * @brief 超时和重试配置

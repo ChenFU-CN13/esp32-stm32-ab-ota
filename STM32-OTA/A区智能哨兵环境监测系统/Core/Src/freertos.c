@@ -66,7 +66,7 @@ void MX_FREERTOS_Init(void) {
 	/*LVGL_APP_GUI初始化*/
 	setup_ui(&guider_ui);		//首页页面初始化，注意:设置页面是在点击设置按钮后才创建
 	events_init(&guider_ui);	//LVGL事件初始化
-	custom_init(&guider_ui);
+	custom_init(&guider_ui);	//UI控件初始化
 	/*APP_GUI初始化*/
 	
 	
@@ -220,7 +220,7 @@ void StartDefaultTask(void *argument)
 			last_ui_refresh = HAL_GetTick();
 			iot_connected = APP_IotHeartbeatCheck(last_ui_refresh);//IOT心跳检查
 			APP_GetSensorSnapshot(&ui_snapshot);		//提供数据给UI
-			ALARM_GetOutputSnapshot(&alarm_output);
+			ALARM_GetOutputSnapshot(&alarm_output);		//提供数据给警报仲裁判断
 			custom_update_light_output_status(alarm_output.green_led_on != 0U);
 
 			APP_UI_UpdateSensorX10(guider_ui.screen_temperature_num,
@@ -263,8 +263,9 @@ void StartDefaultTask(void *argument)
 		}
 
 		lv_timer_handler(); /* 处理LVGL定时器和任务（必须周期性调用） */
-		/* 由现有LVGL主循环承担APP存活证明；任务卡死或调度失效时停止喂狗。 */
-		APP_Watchdog_Refresh();
+
+		APP_Watchdog_Refresh();/* 由现有LVGL主循环承担APP存活证明；任务卡死或调度失效时停止喂狗。 */
+
 		osDelay(5);
 
   }

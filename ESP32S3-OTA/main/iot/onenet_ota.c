@@ -235,7 +235,7 @@ static esp_err_t onenet_ota_http_connect(const char* url,esp_http_client_method_
         return ESP_FAIL;
     }
 
-    char* token = (char*)malloc(256);
+    char* token = (char*)malloc(256);//
     if (token == NULL)
     {
         esp_http_client_cleanup(http_client);

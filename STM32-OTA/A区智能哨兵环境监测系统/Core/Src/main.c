@@ -41,9 +41,22 @@ void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN 0 */
 
 /* 与Bootloader保持相同IWDG配置，避免跳转交接时出现超时窗口突变。 */
-#define APP_IWDG_PRESCALER              4U      //看门狗四分频
+#define APP_IWDG_PRESCALER              4U      //PR  4 = 64 分频，超时约 5s，这里写4是对的，因为二进制是100，解码后就是64
 #define APP_IWDG_RELOAD                 2499U   //重装载计数值
 #define APP_IWDG_UPDATE_TIMEOUT         100U    //看门狗超时时间
+
+//static IWDG_HandleTypeDef hiwdg_app;
+//
+//HAL_StatusTypeDef Watchdog_Init(void)
+//{
+//  	__HAL_DBGMCU_FREEZE_IWDG();             //调试保护：断点暂停CPU时IWDG也暂停，防止调试中被狗咬
+//    hiwdg_app.Instance = IWDG;
+//    hiwdg_app.Init.Prescaler = APP_IWDG_PRESCALER;
+//    hiwdg_app.Init.Reload = APP_IWDG_RELOAD;
+//    return HAL_IWDG_Init(&hiwdg_app);
+//}
+
+//上面是更简单的HAL库写法，下面是寄存器写法
 
 /**
  * @brief 初始化正式APP独立看门狗。
@@ -54,14 +67,14 @@ HAL_StatusTypeDef APP_Watchdog_Init(void)
 {
 	uint32_t start_tick;
 
-	__HAL_DBGMCU_FREEZE_IWDG();
-	IWDG->KR = 0xCCCCU;
-	IWDG->KR = 0x5555U;
-	IWDG->PR = APP_IWDG_PRESCALER;
-	IWDG->RLR = APP_IWDG_RELOAD;
+	__HAL_DBGMCU_FREEZE_IWDG();             //调试保护：断点暂停CPU时IWDG也暂停，防止调试中被狗咬
+	IWDG->KR = 0xCCCCU;                     //启动独立看门狗(硬件内部打开LSI时钟源)
+	IWDG->KR = 0x5555U;                     //解锁PR/RL的写保护
+	IWDG->PR = APP_IWDG_PRESCALER;          //设置分频系数
+	IWDG->RLR = APP_IWDG_RELOAD;            //设置重装值
 
 	start_tick = HAL_GetTick();
-	while ((IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU)) != 0U)
+	while ((IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU)) != 0U)  //这里是等待将预分频和重装值设置完成，PVU对应PR,RVU对应RLR
 	{
 		if ((HAL_GetTick() - start_tick) >= APP_IWDG_UPDATE_TIMEOUT)
 		{
@@ -69,9 +82,13 @@ HAL_StatusTypeDef APP_Watchdog_Init(void)
 		}
 	}
 
-	IWDG->KR = 0xAAAAU;
+	IWDG->KR = 0xAAAAU; //喂第一次狗，⑦喂第一口，计数器从2499开始重新递减
 	return HAL_OK;
 }
+
+
+
+
 
 /**
  * @brief 刷新正式APP独立看门狗。
@@ -81,6 +98,7 @@ HAL_StatusTypeDef APP_Watchdog_Init(void)
 void APP_Watchdog_Refresh(void)
 {
 	IWDG->KR = 0xAAAAU;
+  //(void)HAL_IWDG_Refresh(&hiwdg_app);   //HAL库写法
 }
 
 /* USER CODE END 0 */
@@ -139,10 +157,10 @@ int main(void)
 	USART2_DMA1_Init();
 	USART2_Init(115200);
 	USART3_Init(9600);
-	APP_Watchdog_Refresh();
+	APP_Watchdog_Refresh();     //看门狗喂狗
 	sram_init();
 	FAN_PWM_Init();
-	APP_Watchdog_Refresh();
+	APP_Watchdog_Refresh();     //看门狗喂狗
 
   
 	printf("============================= \r\n");
@@ -155,9 +173,9 @@ int main(void)
 	
   /* Init scheduler */
   osKernelInitialize();  /* Call init function for freertos objects (in freertos.c) */
-	APP_Watchdog_Refresh();
+	APP_Watchdog_Refresh();   //看门狗喂狗
   MX_FREERTOS_Init();
-	APP_Watchdog_Refresh();
+	APP_Watchdog_Refresh();   //看门狗喂狗
 	
   /* Start scheduler */
   osKernelStart();    //开启调度器

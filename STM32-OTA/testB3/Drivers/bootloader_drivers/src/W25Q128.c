@@ -169,11 +169,6 @@ HAL_StatusTypeDef W25Q128_SectorErase(uint32_t addr)
 	erase_cmd[1] = (uint8_t)((addr >> 16) & 0xFF);
 	erase_cmd[2] = (uint8_t)((addr >> 8) & 0xFF);
 	erase_cmd[3] = (uint8_t)(addr & 0xFF);
-
-	 
-	 
-	 
-	 
 	 
 	// 校验1：地址越界检查
 	if (addr >= W25Q128_TOTAL_SIZE)
@@ -208,13 +203,8 @@ HAL_StatusTypeDef W25Q128_SectorErase(uint32_t addr)
 
 		    // 等待擦除完成
 		status = W25Q128_WaitIdle();
-
 		
 		return status;
-		
-		
-		
-		
 		
 }
 

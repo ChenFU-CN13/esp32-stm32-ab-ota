@@ -26,7 +26,8 @@
  *
  * 成员说明:
  *   - Firelen[0]: 最新固件大小(字节)
- *   - Firelen[1-10]: 预留，可用于存储历史固件大小
+ *  - Firelen[1]: 最新固件整体CRC32
+ *   - Firelen[2-10]: 预留，可用于存储历史固件大小
  *   - OTA_VERSION: 版本号字符串，格式如 "v1.0.0"
  */
 typedef struct {
@@ -45,19 +46,39 @@ typedef struct {
  *
  *   或者在IDLE状态超时后直接跳转:
  *   IDLE -> JUMP_TO_APP
+ *
+ *   异常/掉电回滚路径（A区已擦除后任何环节失败均走此路径）:
+ *     擦除失败/写入失败/整体CRC失败/收到ABORT/传输超时/启动CRC失败
+ *       -> ROLLBACK_PENDING（等待延迟到期，期间仍处理串口收发ABORT）
+ *       -> OTA_Storage_Rollback() 从W25Q128恢复旧镜像
+ *       -> 成功: JUMP_TO_APP（或回IDLE等待ESP32结束旧会话）
+ *       -> 失败: RECOVERY_FAILED（无可信备份，停机绝不跳转）
+ *     上电时EEPROM为UPGRADING（上次擦除后断电）:
+ *       OTA_Init -> OTA_Storage_InitAndRecover() 直接恢复，失败则进入RECOVERY_FAILED
  */
 typedef enum {
-    OTA_STATE_IDLE = 0,
-    OTA_STATE_WAIT_CONFIRM,
-    OTA_STATE_WAIT_START,
-    OTA_STATE_WAIT_INFO,
-    OTA_STATE_WAIT_DATA,
-    OTA_STATE_WAIT_END,
-    OTA_STATE_UPGRADE_SUCCESS,
-    OTA_STATE_UPGRADE_FAILED,
-    OTA_STATE_ROLLBACK_PENDING,
-    OTA_STATE_RECOVERY_FAILED,
-    OTA_STATE_JUMP_TO_APP
+    OTA_STATE_IDLE = 0,             /* 空闲/初始态：OTA_Init后进入，等待ESP32二次握手(0x03)；
+									   超时未收到则先校验A区CRC，通过则跳转APP，失败则触发回滚 */
+    OTA_STATE_WAIT_CONFIRM,         /* 预留态（等待二次握手确认）：当前主流程握手成功后直接进入
+									   WAIT_START，本状态暂无进入点，仅ProcessFrame中保留兼容分支 */
+    OTA_STATE_WAIT_START,           /* 等待三次握手(0x04开始传输)：收到后先备份A区到W25Q128、
+									   登记UPGRADING，再擦除A区；15s超时退回IDLE */
+    OTA_STATE_WAIT_INFO,            /* 等待固件信息帧(0x05，25字节)：记录固件大小/整体CRC32/版本号，
+									   计算总包数；15s超时触发回滚 */
+    OTA_STATE_WAIT_DATA,            /* 接收固件数据帧(0x06)：逐包查序号、写A区Flash、回ACK；
+									   收满firmware_size后转WAIT_END；15s无数据触发回滚 */
+    OTA_STATE_WAIT_END,             /* 数据已收满，等待升级结束命令(0x07)：
+									   收到后做整体CRC端到端校验并提交元数据；10s超时触发回滚 */
+    OTA_STATE_UPGRADE_SUCCESS,      /* 升级成功：整体CRC校验+EEPROM元数据提交均通过，
+									   延时500ms后Load_A()跳转到A区新APP */
+    OTA_STATE_UPGRADE_FAILED,       /* 升级失败（保留态）：当前失败统一走ROLLBACK_PENDING恢复，
+									   调度器中仍保留本状态->安排回滚的兜底分支 */
+    OTA_STATE_ROLLBACK_PENDING,     /* 回滚挂起：已写回滚原因，等待s_rollback_deadline到期
+									   （预留窗口让ESP32收NACK后发ABORT），到期执行镜像恢复 */
+    OTA_STATE_RECOVERY_FAILED,      /* 恢复失败/无可用备份：安全停机态，绝不跳转可能损坏的A区，
+									   每2s打印日志，等待SWD/现场人工恢复 */
+    OTA_STATE_JUMP_TO_APP           /* 跳转态：A区镜像可信，Load_A()跳转执行APP，
+									   跳转后函数不再返回 */
 } OTA_State_t;
 
 

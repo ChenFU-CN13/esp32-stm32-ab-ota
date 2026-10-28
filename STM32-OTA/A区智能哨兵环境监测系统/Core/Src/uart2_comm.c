@@ -10,81 +10,103 @@
 #include "./SYSTEM/usart/usart.h"
 #include "./BSP/24CXX/24cxx.h"
 
-#define UART2_COMM_PACKET_QUEUE_LENGTH     16U
-#define UART2_COMM_ACK_TIMEOUT_MS           200U
-#define UART2_COMM_MAX_RETRY_COUNT          3U
-#define UART2_COMM_VERSION_RETRY_MS       5000U
-#define UART2_COMM_TASK_STACK_DEPTH         (128U * 2U)
-#define UART2_COMM_TASK_PRIORITY            3U
-#define UART2_COMM_VERBOSE_BUSINESS_LOG      0U
+/* ------------------------- 模块参数配置 ------------------------- */
+#define UART2_COMM_PACKET_QUEUE_LENGTH     16U   /* 内部待发送队列深度：最多缓存16帧业务数据，满则丢帧，不阻塞发送任务 */
+#define UART2_COMM_ACK_TIMEOUT_MS           200U /* 单帧业务数据等待ESP32 ACK的超时时间，超时即进入重发 */
+#define UART2_COMM_MAX_RETRY_COUNT          3U   /* 每帧最多重发次数；首次发送+3次重发=最多发送4次 */
+#define UART2_COMM_VERSION_RETRY_MS       5000U  /* 版本帧未被ACK时的重报周期 */
+#define UART2_COMM_TASK_STACK_DEPTH         (128U * 2U) /* 通讯任务栈深度(单位为字)：128*2=256字，约1KB */
+#define UART2_COMM_TASK_PRIORITY            3U   /* 通讯任务优先级：需保证能及时处理ACK超时和DMA完成 */
+#define UART2_COMM_VERBOSE_BUSINESS_LOG      0U   /* 1=打印每帧业务收发日志；0=关闭，避免串口刷屏影响实时性 */
 
-#define UART2_COMM_VERSION_TYPE              0x05U
-#define UART2_COMM_EEPROM_VERSION_ADDR       0x2CU
-#define UART2_COMM_EEPROM_VERSION_LENGTH     8U
+/* ---------------------- 版本上报相关参数 ---------------------- */
+#define UART2_COMM_VERSION_TYPE              0x05U /* 业务帧类型：APP版本，data[0]=主 data[1]=次 data[2]=修订 */
+#define UART2_COMM_EEPROM_VERSION_ADDR       0x2CU /* AT24C02中版本字符串起始地址(由Bootloader写入) */
+#define UART2_COMM_EEPROM_VERSION_LENGTH     8U    /* 版本字段固定8字节，ASCII形如"v2.0.2" */
 
-#define UART2_COMM_NOTIFY_RX                (1UL << 0)
-#define UART2_COMM_NOTIFY_TX_COMPLETE       (1UL << 1)
-#define UART2_COMM_NOTIFY_RX_ERROR          (1UL << 2)
+/* ------------------- 任务通知位(ISR -> 任务) ------------------- */
+#define UART2_COMM_NOTIFY_RX                (1UL << 0) /* 中断收到1字节并已放入环形缓冲，任务可取出解析 */
+#define UART2_COMM_NOTIFY_TX_COMPLETE       (1UL << 1) /* DMA发送完成，可释放发送缓冲、允许发下一帧或OTA复位 */
+#define UART2_COMM_NOTIFY_RX_ERROR          (1UL << 2) /* 串口错误(ORE/FE/NE等)，当前半帧不可信，需重置解析器 */
 
+/* ----------------------- 通讯模块状态机 ----------------------- */
 typedef enum
 {
-    UART2_COMM_MODE_NORMAL = 0,
-    UART2_COMM_MODE_OTA_ACK_PENDING,
-    UART2_COMM_MODE_OTA_ACK_SENDING
+    UART2_COMM_MODE_NORMAL = 0,       /* 正常业务收发：允许组帧、检查ACK超时、启动DMA发送 */
+    UART2_COMM_MODE_OTA_ACK_PENDING,  /* 已收到66 01 BB，等待DMA空闲后发送OTA ACK；不再取新业务数据 */
+    UART2_COMM_MODE_OTA_ACK_SENDING   /* OTA ACK正在DMA发送；发送完成中断里执行NVIC_SystemReset() */
 } UART2_CommMode_t;
 
-static TaskHandle_t s_uart2_comm_task_handle = NULL;
-static QueueHandle_t s_uart2_packet_queue = NULL;
+/* ----------------------- 任务与队列句柄 ----------------------- */
+static TaskHandle_t s_uart2_comm_task_handle = NULL;   /* 通讯任务句柄，中断通过它发送任务通知 */
+static QueueHandle_t s_uart2_packet_queue = NULL;      /* 内部待发送队列，元素为8字节业务帧 */
 
+/* ----------------------- 发送相关状态 ----------------------- */
 static UART_Packet_t s_active_business_packet;  /* DMA发送期间必须持续有效。 */
+
+/* OTA ACK固定帧 66 02 BB，预置于静态区供DMA直接读取 */
 static uint8_t s_ota_ack_frame[3] = {
     UART2_COMM_OTA_HEAD,
     UART2_COMM_OTA_ACK_CMD,
     UART2_COMM_OTA_TAIL
 };
 
-static uint8_t s_rx_frame[sizeof(UART_Packet_t)];
-static uint8_t s_rx_frame_length = 0U;
-static uint8_t s_rx_expected_length = 0U;
-static uint32_t s_last_overflow_count = 0U;
-static uint32_t s_ack_deadline = 0U;
-static uint8_t s_retry_count = 0U;
-static uint8_t s_active_business_valid = 0U;
-static uint8_t s_waiting_business_ack = 0U;
-static uint8_t s_tx_dma_busy = 0U;
-static volatile uint8_t s_rx_error_pending = 0U;
-static UART2_CommMode_t s_comm_mode = UART2_COMM_MODE_NORMAL;
-static uint32_t s_ack_drop_count = 0U;
-static UART_Packet_t s_version_report_packet;
-static uint8_t s_version_report_valid = 0U;
-static uint8_t s_version_report_acked = 0U;
-static uint8_t s_version_report_queued = 0U;
-static uint32_t s_version_report_next_tick = 0U;
+/* ----------------------- 接收解析状态 ----------------------- */
+static uint8_t s_rx_frame[sizeof(UART_Packet_t)];   /* 收帧暂存区，按最大帧长(8字节业务帧)预留 */
+static uint8_t s_rx_frame_length = 0U;              /* 当前帧已收字节数，0表示正在等待帧头 */
+static uint8_t s_rx_expected_length = 0U;           /* 本帧预期总长度：8=业务帧，3=OTA控制帧，0=未确定 */
+static uint32_t s_last_overflow_count = 0U;         /* 上次记录的环形缓冲溢出次数，用于发现丢字节 */
 
-static void UART2_Comm_Task(void *pvParameters);
-static void UART2_Comm_NotifyFromISR(uint32_t notify_bits);
-static void UART2_Comm_ResetParser(void);
-static void UART2_Comm_DrainRxBytes(void);
-static void UART2_Comm_FeedRxByte(uint8_t byte);
-static void UART2_Comm_ProcessCompletedFrame(void);
-static void UART2_Comm_HandleBusinessAck(uint8_t result);
-static void UART2_Comm_HandleVersionRequest(void);
-static void UART2_Comm_QueueBusinessPackets(void);
-static void UART2_Comm_TryStartBusinessTx(void);
-static void UART2_Comm_CheckBusinessTimeout(void);
-static void UART2_Comm_TryStartOtaAck(void);
-static void UART2_Comm_PrepareVersionReport(void);
-static void UART2_Comm_TryQueueVersionReport(void);
+/* ----------------------- 业务发送与ACK状态 ----------------------- */
+static uint32_t s_ack_deadline = 0U;                /* 当前帧的ACK截止时刻(tick)，超时或收到失败ACK后置为已过期 */
+static uint8_t s_retry_count = 0U;                  /* 当前帧已重发次数，达到上限后丢弃该帧 */
+static uint8_t s_active_business_valid = 0U;        /* 1=发送缓冲中有一帧尚未发出的完整业务帧 */
+static uint8_t s_waiting_business_ack = 0U;         /* 1=已发出但未收到ACK，期间禁止发下一帧(协议串行) */
+static uint8_t s_tx_dma_busy = 0U;                  /* 1=DMA正在读发送缓冲，此时不能发新帧、不能OTA复位 */
+static volatile uint8_t s_rx_error_pending = 0U;    /* 中断置1通知任务发生串口错误，任务处理完后清0 */
+static UART2_CommMode_t s_comm_mode = UART2_COMM_MODE_NORMAL; /* 模块总状态机，决定任务每轮走哪条分支 */
+static uint32_t s_ack_drop_count = 0U;              /* 因重试超限而丢弃的帧数，仅用于调试观察 */
+
+/* ----------------------- 版本上报状态 ----------------------- */
+static UART_Packet_t s_version_report_packet;       /* 预组好的版本上报帧 55 05 ...，供周期重发复用 */
+static uint8_t s_version_report_valid = 0U;         /* 1=EEPROM中读到合法版本，允许上报 */
+static uint8_t s_version_report_acked = 0U;         /* 1=ESP32已确认版本，停止周期重报 */
+static uint8_t s_version_report_queued = 0U;        /* 1=版本帧已入队但未发完，避免重复入队 */
+static uint32_t s_version_report_next_tick = 0U;    /* 下一次允许重报版本的tick时刻 */
+
+/* ----------------------- 任务与中断通知 ----------------------- */
+static void UART2_Comm_Task(void *pvParameters);            /* 通讯任务主体：收发调度、超时检测与状态机 */
+static void UART2_Comm_NotifyFromISR(uint32_t notify_bits); /* 在中断中向通讯任务发送通知位 */
+
+/* ----------------------- 接收解析链路 ----------------------- */
+static void UART2_Comm_ResetParser(void);                   /* 丢弃半帧，回到"等待帧头"状态 */
+static void UART2_Comm_DrainRxBytes(void);                  /* 取空环形缓冲，逐字节送入解析器 */
+static void UART2_Comm_FeedRxByte(uint8_t byte);            /* 单字节组帧状态机：识别帧头->按固定长度收满 */
+static void UART2_Comm_ProcessCompletedFrame(void);         /* 校验完整帧并分派：业务ACK/心跳/OTA/版本查询 */
+static void UART2_Comm_HandleBusinessAck(uint8_t result);   /* 处理ESP32业务ACK：0成功，非0立即触发重发 */
+static void UART2_Comm_HandleVersionRequest(void);          /* 处理66 09 BB版本查询，安排立即重报版本 */
+
+/* ----------------------- 发送与重传链路 ----------------------- */
+static void UART2_Comm_QueueBusinessPackets(void);          /* 把业务消息队列内容转换成0x55八字节帧 */
+static void UART2_Comm_TryStartBusinessTx(void);            /* 空闲且无待ACK时启动一帧业务DMA发送 */
+static void UART2_Comm_CheckBusinessTimeout(void);          /* 检查200ms ACK超时：重发，超限则丢帧 */
+static void UART2_Comm_TryStartOtaAck(void);                /* DMA空闲后优先发送66 02 BB，发完复位 */
+
+/* ----------------------- 版本上报链路 ----------------------- */
+static void UART2_Comm_PrepareVersionReport(void);          /* 启动时从AT24C02读版本并预组上报帧 */
+static void UART2_Comm_TryQueueVersionReport(void);         /* 未确认时按5s周期把版本帧插入队首 */
 static uint8_t UART2_Comm_ParseVersion(const uint8_t *raw_version,
                                        uint8_t *major,
                                        uint8_t *minor,
-                                       uint8_t *patch);
-static BaseType_t UART2_Comm_StartDmaTx(uint8_t *data, uint16_t length);
-static void UART2_Comm_QueuePacket(const UART_Packet_t *packet);
-static void UART2_Comm_InitPacket(UART_Packet_t *packet, uint8_t type);
-static void UART2_Comm_LogFrame(const char *tag, const uint8_t *data, uint16_t length);
-static uint8_t UART2_Comm_TempX10ToU8(int16_t temp_x10);
-static uint8_t UART2_Comm_HumiX10ToU8(uint16_t humi_x10);
+                                       uint8_t *patch);      /* 解析"X.X.X"为三段数值，失败返回0 */
+
+/* ----------------------- 公共工具函数 ----------------------- */
+static BaseType_t UART2_Comm_StartDmaTx(uint8_t *data, uint16_t length); /* 统一DMA发送入口，置位busy标志 */
+static void UART2_Comm_QueuePacket(const UART_Packet_t *packet);         /* 帧入队，队列满则丢弃并计数 */
+static void UART2_Comm_InitPacket(UART_Packet_t *packet, uint8_t type);  /* 填充帧头/类型、清零data、填帧尾 */
+static void UART2_Comm_LogFrame(const char *tag, const uint8_t *data, uint16_t length); /* 十六进制打印一帧 */
+static uint8_t UART2_Comm_TempX10ToU8(int16_t temp_x10);                 /* 温度x10转整数℃，负值按0处理 */
+static uint8_t UART2_Comm_HumiX10ToU8(uint16_t humi_x10);                /* 湿度x10转整数%RH，上限截断到100 */
 
 /**
  * @brief 初始化 UART2 通讯模块，并启动唯一的 USART2 通讯任务。
@@ -294,7 +316,7 @@ static void UART2_Comm_FeedRxByte(uint8_t byte)
         {
             s_rx_frame[0] = byte;
             s_rx_frame_length = 1U;
-            s_rx_expected_length = sizeof(s_ota_ack_frame);
+            s_rx_expected_length = sizeof(s_ota_ack_frame);//OTA控制帧固定收集3字节
         }
         return;
     }
