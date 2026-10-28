@@ -261,9 +261,7 @@ uint32_t Flash_Addr_bySector(uint16_t SectorNo);
 //根据Page  绝对编号获取地址，共65536个Page
 uint32_t Flash_Addr_byPage(uint16_t PageNo);
  
- 
- 
- 
+
 //根据Block编号，和内部Sector编号计算地址，一个Block有16个Sector,
 uint32_t Flash_Addr_byBlockSector(uint8_t BlockNo, uint8_t SubSectorNo);
 

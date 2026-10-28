@@ -38,6 +38,7 @@ HAL_StatusTypeDef Bootloader_WatchdogInit(void)
 
 	/*先判断MCU 这次启动，是不是因为 IWDG 看门狗超时导致的复位。*/
 	s_iwdg_reset_detected = (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET) ? 1U : 0U;
+
 	__HAL_RCC_CLEAR_RESET_FLAGS();	//清除复位标志
 	__HAL_DBGMCU_FREEZE_IWDG();		//开启这个看门狗调试功能后，在keil选择断电调试时，CPU虽然停止工作，但是不会因为CPU没有及时喂狗而导致单片机不断复位
 

@@ -106,7 +106,7 @@ int main(void)
   if (Bootloader_WatchdogInit() == HAL_OK)
   {
     U1_Printf("[IWDG] 已启动，名义超时约5000 ms\r\n");
-    if (Bootloader_WasIwdgReset())
+    if (Bootloader_WasIwdgReset())//函数里面有标志位，在独立看门狗复位后会设置为1（前提是复位是由看门狗触发的）
     {
       U1_Printf("[IWDG] 检测到上一次由独立看门狗复位\r\n");
     }
