@@ -199,7 +199,7 @@ void uart_recive_buff(void* pvParameters)
                  uart_ev.type == UART_FIFO_OVF))
             {
                 /* OTA 期间普通业务任务主动放弃本事件，记录原因以免误判为未收到数据。 */
-                ESP_LOGW(TAG, "[UART][DROP] OTA busy, event type=%d ignored", (int)uart_ev.type);
+                //ESP_LOGW(TAG, "[UART][DROP] OTA busy, event type=%d ignored", (int)uart_ev.type);
                 continue;   /* 丢弃事件，回到xQueueReceive继续等下一个 */
             }
 

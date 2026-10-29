@@ -166,7 +166,9 @@ int main(void)
 	printf("============================= \r\n");
 	printf("enter A code is successfully! \r\n");
   //printf("调试:该固件版本为v2.0.0! \r\n");
-  printf("调试:该固件版本为v2.0.2! \r\n");
+  //printf("调试:该固件版本为v2.0.2! \r\n");
+  //printf("调试:该固件版本为v2.0.3，更新内容：使用累计式环形缓冲区! \r\n");
+  printf("调试:该固件版本为2.0.5，更新内容：APP与bootloader采用累计式环形缓冲区! \r\n");
 	printf("[IWDG] APP已接管，超时限制约5000 ms\r\n");
 	printf("============================= \r\n");
 

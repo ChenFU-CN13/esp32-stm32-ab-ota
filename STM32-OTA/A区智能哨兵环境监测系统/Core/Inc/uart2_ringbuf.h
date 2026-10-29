@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 /* USART2 接收缓冲区：仅允许中断写入、通讯任务读取。 */
-#define UART2_RINGBUF_SIZE       64U
-
+#define UART2_RINGBUF_SIZE       64U                    //缓冲区长度
+#define UART2_RINGBUF_MASK (UART2_RINGBUF_SIZE - 1U)    //最后一位的下标
 /**
  * @brief 初始化 USART2 接收环形缓冲区。
  * @param 无。
