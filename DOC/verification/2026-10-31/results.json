@@ -1,0 +1,487 @@
+{
+  "date": "2026-10-31",
+  "baudrate": 115200,
+  "notes": [
+    "Selected result fields and log excerpts; original captures remain local.",
+    "Partial transfers have no full-image throughput.",
+    "ESP32 final result is based on user confirmation and screenshots, not full archived logs."
+  ],
+  "cases": [
+    {
+      "case": "split_8_1029",
+      "source_run_id": "upgrade_capture_20261031_000844_661000",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "normal",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": 10,
+      "split_executed": true,
+      "timing": {
+        "mode": "normal",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.049608100089244545,
+        "handshake_s": 0.03262059995904565,
+        "backup_erase_s": 13.283596899942495,
+        "info_s": 0.06671659997664392,
+        "transfer_s": 55.16084969998337,
+        "final_check_s": 0.3251342000439763,
+        "app_wait_s": 2.038412700057961,
+        "handshake_to_app_s": 70.90775210002903,
+        "notify_to_app_s": 71.45758890011348,
+        "payload_bytes_per_s": 7855.571521410603,
+        "payload_kib_per_s": 7.671456563877542
+      },
+      "injection": {
+        "seq": 10,
+        "cuts": [
+          8
+        ],
+        "gap_ms": 50,
+        "parts": [
+          8,
+          1029
+        ]
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "split_seven_parts",
+      "source_run_id": "upgrade_capture_20261031_001822_521992",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "normal",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": 10,
+      "split_executed": true,
+      "split_data_cuts": [
+        1,
+        2,
+        8,
+        520,
+        1032,
+        1036
+      ],
+      "split_gap_ms": 50.0,
+      "timing": {
+        "mode": "normal",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.044766100007109344,
+        "handshake_s": 0.03242760000284761,
+        "backup_erase_s": 13.281730000046082,
+        "info_s": 0.07173859991598874,
+        "transfer_s": 55.68756220000796,
+        "final_check_s": 0.33347780001349747,
+        "app_wait_s": 2.038392400019802,
+        "handshake_to_app_s": 71.45215229992755,
+        "notify_to_app_s": 71.99731519992929,
+        "payload_bytes_per_s": 7781.270770009359,
+        "payload_kib_per_s": 7.598897236337264
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "glue_last_two",
+      "source_run_id": "upgrade_capture_20261031_003647_195552",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "normal",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": true,
+      "glue_executed": true,
+      "glue_ack_count": 2,
+      "timing": {
+        "mode": "normal",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.045179200009442866,
+        "handshake_s": 0.03512459993362427,
+        "backup_erase_s": 13.340368499979377,
+        "info_s": 0.059877000050619245,
+        "transfer_s": 54.893322500051,
+        "final_check_s": 0.32843019999563694,
+        "app_wait_s": 2.0295228000031784,
+        "handshake_to_app_s": 70.6870423000073,
+        "notify_to_app_s": 71.23277240002062,
+        "payload_bytes_per_s": 7893.85630646783,
+        "payload_kib_per_s": 7.70884404928499
+      },
+      "injection": {
+        "seq": [
+          422,
+          423
+        ],
+        "frame_bytes": [
+          1037,
+          181
+        ],
+        "single_write_bytes": 1218
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "firmware_crc_recovery",
+      "source_run_id": "fwcrc_capture_20261031_004917_351389",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "crc_rollback",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": false,
+      "glue_executed": false,
+      "glue_ack_count": 0,
+      "cleanup": {
+        "attempted": true,
+        "abort_sent": true,
+        "abort_ack": true,
+        "restored_version": [
+          2,
+          0,
+          7
+        ],
+        "version_match": true,
+        "success": true,
+        "stale_nacks": [],
+        "errors": []
+      },
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": "D4977540",
+        "match": true
+      },
+      "timing": {
+        "mode": "crc_rollback",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.03520469996146858,
+        "handshake_s": 0.033602099982090294,
+        "backup_erase_s": 13.313402300002053,
+        "info_s": 0.06322140002157539,
+        "transfer_s": 54.87049180001486,
+        "final_check_s": 0.24815150001086295,
+        "abort_ack_s": 0.04480479995254427,
+        "app_wait_s": 11.755181799991988,
+        "handshake_to_app_s": 80.33012359996792,
+        "notify_to_app_s": 80.86567480000667,
+        "payload_bytes_per_s": 7897.140808930797,
+        "payload_kib_per_s": 7.712051571221481
+      },
+      "observed_nack_codes": [
+        "0x05"
+      ]
+    },
+    {
+      "case": "normal_after_crc",
+      "source_run_id": "upgrade_capture_20261031_005510_862863",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "normal",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": false,
+      "glue_executed": false,
+      "glue_ack_count": 0,
+      "cleanup": {},
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": null,
+        "match": null
+      },
+      "timing": {
+        "mode": "normal",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.04050070000812411,
+        "handshake_s": 0.0276686999714002,
+        "backup_erase_s": 13.314567799912766,
+        "info_s": 0.06775519996881485,
+        "transfer_s": 55.05841810000129,
+        "final_check_s": 0.3238134999992326,
+        "app_wait_s": 2.046840099967085,
+        "handshake_to_app_s": 70.84537100000307,
+        "notify_to_app_s": 71.38646349997725,
+        "payload_bytes_per_s": 7870.186157781925,
+        "payload_kib_per_s": 7.6857286697089116
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "active_abort",
+      "source_run_id": "abort_capture_20261031_080032_639631",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "abort_recovery",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": false,
+      "glue_executed": false,
+      "glue_ack_count": 0,
+      "abort_after_packets": 10,
+      "cleanup": {
+        "packets_confirmed": 10,
+        "attempted": true,
+        "abort_sent": true,
+        "abort_ack": true,
+        "restored_version": [
+          2,
+          0,
+          7
+        ],
+        "version_match": true,
+        "success": true,
+        "stale_nacks": [],
+        "errors": []
+      },
+      "timeout_test": {},
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": "D4977540",
+        "match": true
+      },
+      "timing": {
+        "mode": "abort_recovery",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.04492979997303337,
+        "handshake_s": 0.03497190005145967,
+        "backup_erase_s": 13.138774000108242,
+        "info_s": 0.06015440006740391,
+        "abort_ack_s": 0.04519630002323538,
+        "app_wait_s": 11.951878100051545,
+        "handshake_to_app_s": 26.524315900052898,
+        "notify_to_app_s": 27.069622899987735
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "normal_after_abort",
+      "source_run_id": "upgrade_capture_20261031_080443_746180",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "normal",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": false,
+      "glue_executed": false,
+      "glue_ack_count": 0,
+      "abort_after_packets": null,
+      "cleanup": {},
+      "timeout_test": {},
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": null,
+        "match": null
+      },
+      "timing": {
+        "mode": "normal",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.044669499970041215,
+        "handshake_s": 0.03634660004172474,
+        "backup_erase_s": 13.24371660000179,
+        "info_s": 0.06464039999991655,
+        "transfer_s": 54.844475500052795,
+        "final_check_s": 0.3243554999353364,
+        "app_wait_s": 2.0484854000387713,
+        "handshake_to_app_s": 70.56246320006903,
+        "notify_to_app_s": 71.10738830000628,
+        "payload_bytes_per_s": 7900.886936179796,
+        "payload_kib_per_s": 7.715709898613082
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "data_timeout",
+      "source_run_id": "timeout_capture_20261031_080940_037636",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "timeout_recovery",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": false,
+      "glue_executed": false,
+      "glue_ack_count": 0,
+      "abort_after_packets": null,
+      "cleanup": {
+        "attempted": true,
+        "abort_sent": true,
+        "abort_ack": true,
+        "restored_version": [
+          2,
+          0,
+          7
+        ],
+        "version_match": true,
+        "success": true,
+        "stale_nacks": [],
+        "errors": []
+      },
+      "timeout_test": {
+        "packets_confirmed": 10,
+        "silence_s": 16,
+        "silence_actual_s": 16.0,
+        "recovery_notice": true
+      },
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": "D4977540",
+        "match": true
+      },
+      "timing": {
+        "mode": "timeout_recovery",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.04964659991674125,
+        "handshake_s": 0.032166199991479516,
+        "backup_erase_s": 13.22993969998788,
+        "info_s": 0.06663959997240454,
+        "abort_ack_s": 0.04432109999470413,
+        "app_wait_s": 1.600161400041543,
+        "handshake_to_app_s": 41.86349430005066,
+        "notify_to_app_s": 42.41378679999616,
+        "timeout_recovery_wait_s": 25.590041199931875
+      },
+      "observed_nack_codes": [
+        "0x08"
+      ]
+    },
+    {
+      "case": "normal_after_timeout",
+      "source_run_id": "upgrade_capture_20261031_081032_542086",
+      "evidence": "saved_serial_capture",
+      "protocol_pass": true,
+      "test_mode": "normal",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "split_data_seq": null,
+      "split_executed": false,
+      "split_data_cuts": null,
+      "split_gap_ms": null,
+      "glue_last_data": false,
+      "glue_executed": false,
+      "glue_ack_count": 0,
+      "abort_after_packets": null,
+      "cleanup": {},
+      "timeout_test": {},
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": null,
+        "match": null
+      },
+      "timing": {
+        "mode": "normal",
+        "firmware_bytes": 433320,
+        "baudrate": 115200,
+        "complete": true,
+        "endpoint": "主机确认 APP 版本；包含 APP 初始化及主机等待时间",
+        "notify_s": 0.05141139996703714,
+        "handshake_s": 0.043721099966205657,
+        "backup_erase_s": 13.24366340006236,
+        "info_s": 0.06658390001393855,
+        "transfer_s": 54.84745310002472,
+        "final_check_s": 0.32658999995328486,
+        "app_wait_s": 2.034440999967046,
+        "handshake_to_app_s": 70.56283249997068,
+        "notify_to_app_s": 71.11481589998584,
+        "payload_bytes_per_s": 7900.458006860572,
+        "payload_kib_per_s": 7.715291022324777
+      },
+      "observed_nack_codes": []
+    },
+    {
+      "case": "powerloss_mid_transfer",
+      "source_run_id": "powerloss_capture_20261031_081758_792477",
+      "evidence": "saved_serial_capture",
+      "test_pass": true,
+      "test_mode": "powerloss_recovery",
+      "candidate_version": "2.0.7",
+      "expected_current_version": "2.0.7",
+      "recovery_crc": {
+        "backup": "D4977540",
+        "restored": "D4977540",
+        "match": true
+      },
+      "firmware_bytes": 433320,
+      "firmware_crc": "D4977540",
+      "firmware_sha256": "5dd0344d4bede9368998b2c6c06f75463b70b5e246a371f9302b9ff39cffd1e4",
+      "stop_after_packets": 212,
+      "packets_confirmed": 212,
+      "usb_removed": true,
+      "power_off_confirmed_by_user": true,
+      "reset_held_confirmed_by_user": true,
+      "startup_recovery_seen": true,
+      "usb_removal_wait_s": 2.078,
+      "restored_version": [
+        2,
+        0,
+        7
+      ],
+      "original_version": [
+        2,
+        0,
+        7
+      ],
+      "observed_nack_codes": []
+    },
+    {
+      "case": "esp32_onenet_2_0_8",
+      "evidence": "user_hardware_confirmation_and_screenshots",
+      "from_version": "2.0.7",
+      "target_version": "2.0.8",
+      "packets": 424,
+      "firmware_bytes": 433356,
+      "firmware_crc": "BE9E415E",
+      "firmware_sha256": "36bf77c86391e8c3f46632f713580dece9bbfa0c4d89597d12d70cd603470f53",
+      "app_version_confirmed": true,
+      "cloud_step": 201,
+      "cloud_response_code": 0,
+      "manager_final_state": "IDLE",
+      "mqtt_property_ack_after_upgrade": true,
+      "complete_raw_logs_archived_publicly": false
+    }
+  ]
+}

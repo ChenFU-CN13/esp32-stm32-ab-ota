@@ -24,6 +24,8 @@
 | 文档/目录 | 内容 |
 |---|---|
 | [验证状态与证据边界](verification/README.md) | 已验证、用户确认、尚未验证三类结论。 |
+| [串口组帧与 Python OTA 验证](verification/2026-10-31-uart-python-ota.md) | 拆帧/粘帧修复、异常恢复后再次升级、实际断电及 2.0.8 双端正常 OTA。 |
+| [Python 测试运行说明](../Python_test/README.md) | 接线、依赖、故障注入命令、采集字段和离线检查。 |
 | [累计式环形缓冲区更新](verification/2026-10-29-累计式环形缓冲区更新.md) | APP/Bootloader 软件环改动、版本验证边界、ESP32 日志调整及 Python 测试接入计划。 |
 | OneNET 原始截图 | 含账号、产品和设备标识，暂放本地忽略目录，裁剪后再选择性公开。 |
 

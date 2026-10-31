@@ -1,16 +1,18 @@
 # ESP32-S3 + STM32F407 双 MCU 可靠 OTA 与环境监测终端
 
-这是一个由 **ESP32-S3 云端网关**与 **STM32F407 设备端**组成的双 MCU 嵌入式项目。ESP32-S3 负责 OneNET 接入、HTTPS 固件下载和 UART 升级调度；STM32F407 负责 Bootloader、固件回滚、FreeRTOS 业务、LVGL 界面、传感器采集和执行器控制。
+这是一个由 **ESP32-S3 云端网关**与 **STM32F407 设备端**组成的双 MCU 嵌入式项目。ESP32-S3 负责 OneNET 接入、HTTP 固件下载和 UART 升级调度；STM32F407 负责 Bootloader、固件回滚、FreeRTOS 业务、LVGL 界面、传感器采集和执行器控制。
 
-> 本项目由本人独立完成需求拆分、协议设计、双端编码、硬件接线、实机调试、故障定位和文档整理。项目重点不是“能把固件写进去”，而是把异常退出、掉电恢复、版本闭环和可复现调试证据一起做完整。
+> 项目围绕双 MCU OTA 的接收、校验、回滚和版本闭环实现，并通过串口故障注入、镜像 CRC 与实机日志验证结果。
 
-已保存完整验证记录的正式基线为 **v2.0.0**。当前工作区已出现 `v2.0.2` 调试标识，但本轮只整理仓库和文档，没有重新编译、烧录或实机回归，因此不把它写成已发布版本。
+最新实机验证为 **2.0.7 → 2.0.8**：STM32 接收 433356 字节并通过整体 CRC32，ESP32 确认新版 APP，OneNET 确认升级成功。新增 Python 串口测试用于验证拆帧、粘帧、故障回滚和恢复后再次升级，详见 [本次验证记录](DOC/verification/2026-10-31-uart-python-ota.md)。
 
 ## 项目亮点
 
 - 打通 `OneNET → ESP32-S3 → UART → STM32 Bootloader → APP` 的完整 OTA 链路。
 - 采用“内部 Bootloader + 单 APP 区 + W25Q128 单备份”方案，支持升级前备份、异常回滚和掉电恢复。
 - 自定义 UART 协议包含阶段状态机、ACK/NACK、ABORT、有界重试、逐帧 CRC32 和整包 CRC32。
+- STM32 使用“DMA 搬运 → 累计式软件环 → 按长度提帧 → 状态与 CRC 检查”，支持已实测的数据帧拆分和相邻两帧粘连。
+- Python 可替代串口主站执行故障注入，分别记录用例结果、ABORT 收尾、恢复 CRC 和阶段耗时。
 - STM32 APP 基于 FreeRTOS + LVGL，完成 SHT30 Modbus、BH1750、MQ-2、风扇、蜂鸣器和灯光控制。
 - 保留正常升级、CRC 失败、主动中止、升级中断电、IWDG 恢复和版本回查等实机验证记录。
 - 复盘两次代表性问题：W25Q128 分页写入导致固件碎片化，以及 `vTaskSuspend` 冻结持锁任务导致 OTA 重试死锁。
@@ -35,7 +37,7 @@ flowchart LR
     Cloud["OneNET<br/>物模型 / OTA 任务"]
 
     subgraph Gateway["ESP32-S3 云端网关"]
-        Net["Wi-Fi / MQTT / HTTPS"]
+        Net["Wi-Fi / MQTT / HTTP"]
         Manager["常驻 OTA Manager"]
         Serial["UART 协议与业务转发"]
         Net --> Manager --> Serial
@@ -58,7 +60,7 @@ flowchart LR
         Display["LCD / LVGL"]
     end
 
-    Cloud <-->|"MQTT + HTTPS"| Net
+    Cloud <-->|"MQTT + HTTP"| Net
     Serial <-->|"USART2 自定义协议"| BL
     Serial <-->|"业务数据 / ACK / 版本"| APP
     BL <-->|"备份与回滚"| W25
@@ -91,12 +93,15 @@ sequenceDiagram
     participant EE as AT24C02
 
     Cloud->>ESP: 下发 STM32 固件升级任务
-    ESP->>ESP: HTTPS 下载并校验 MD5/CRC32
+    ESP->>ESP: HTTP 下载并校验 MD5/CRC32
     ESP->>APP: 升级通知 0x01
     APP-->>ESP: ACK，等待 DMA 完成后复位
+    ESP->>BL: 0x03 握手并等待 ACK
+    ESP->>BL: 0x04 请求开始传输
     BL->>W25: 备份当前可信 APP
     BL->>EE: 写入 UPGRADING 状态与备份元数据
-    ESP->>BL: 二次握手、固件信息、1 KiB 数据帧
+    BL-->>ESP: 备份与擦除完成 ACK
+    ESP->>BL: 固件信息、1 KiB 数据帧
     BL-->>ESP: 每阶段 ACK/NACK
     BL->>BL: 读取内部 Flash，计算整包 CRC32
     alt 校验通过
@@ -116,7 +121,7 @@ sequenceDiagram
 
 | 模块 | 主要职责 |
 |---|---|
-| ESP32-S3 | 连接 Wi-Fi/OneNET；检查 OTA 任务；通过 HTTPS 下载固件到 SPIFFS；同步计算 MD5/CRC32；通过 UART 向 STM32 发送固件；上报升级结果和环境数据。 |
+| ESP32-S3 | 连接 Wi-Fi/OneNET；检查 OTA 任务；通过 HTTP 下载固件到 SPIFFS；同步计算 MD5/CRC32；通过 UART 向 STM32 发送固件；上报升级结果和环境数据。 |
 | STM32 Bootloader | 完成二次握手、旧 APP 备份、内部 Flash 擦写、协议状态机、逐帧/整包 CRC32、异常回滚、IWDG 保护和 APP 跳转。 |
 | STM32 APP | 运行 FreeRTOS 与 LVGL；采集环境数据；执行报警和风扇控制；与 ESP32 交换业务帧；从 AT24C02 读取并上报当前 APP 版本。 |
 
@@ -126,8 +131,9 @@ sequenceDiagram
 |---|---|
 | 下载文件损坏 | ESP32 下载时校验 OneNET 提供的 MD5，同时流式计算标准 CRC32。 |
 | UART 帧损坏 | 固件信息帧和每个数据帧分别带 CRC32；错误通过 NACK 返回明确原因。 |
+| 半帧或多帧一起到达 | 按命令和协议长度等待完整帧，每次只消费一帧并保留后续字节；阶段超时仍有效。 |
 | 内部 Flash 写入不完整 | STM32 写完后重新读取整个 APP 区，与固件期望 CRC32 比对。 |
-| 重试失控或双方状态错位 | ACK/NACK、ABORT、阶段超时和整体重试上限共同约束会话。 |
+| 重试失控或双方状态错位 | ACK/NACK、ABORT 和阶段超时约束会话；设备端恢复后再次升级已验证，ESP32 异常整次重试仍有后续改进项。 |
 | 擦除后掉电或系统复位 | 升级前把可信 APP 备份到 W25Q128，并在 AT24C02 记录 `UPGRADING`；重启后优先恢复旧镜像。 |
 | Bootloader 长耗时流程卡死 | Bootloader 启动 IWDG，在擦除、写入、备份和 CRC 过程中设置明确喂狗点；APP 接管同一看门狗。 |
 | ESP32 单独重启后版本丢失 | ESP32 可发送 `66 09 BB` 请求，运行中的 APP 重新读取并上报持久化版本。 |
@@ -160,6 +166,18 @@ main.c
 ```
 
 ## 实机验证状态
+
+2026-10-31 新增验证重点如下；[详细记录与公开证据](DOC/verification/2026-10-31-uart-python-ota.md)包含运行摘要、日志摘录及覆盖边界。
+
+| 本次用例 | 结果 |
+|---|---|
+| 8+1029 字节拆帧、七段拆帧，间隔 50 ms | 完整接收、整体 CRC 与 APP 版本通过。 |
+| 相邻末两帧一次提交，共 1218 字节 | 收到两次 ACK，短尾包和整体 CRC 通过。 |
+| 整体 CRC 拒收、主动 ABORT、数据超时 | 旧镜像 CRC 恢复一致，三类恢复后均直接完成新一轮正常升级。 |
+| 212/424 包后实际断电一次 | 上电识别未完成升级，恢复旧 APP 2.0.7。 |
+| ESP32-S3 → STM32 正常 OTA 一次 | 新版 2.0.8、CRC `BE9E415E`、云端成功结果和后续 MQTT 通信确认。 |
+
+以下为已有历史验证，未在本次发布操作中全部重跑：
 
 | 用例 | 状态 | 证据边界 |
 |---|---|---|
@@ -220,7 +238,7 @@ main.c
 
 | 分类 | 使用内容 |
 |---|---|
-| 云端与网络 | OneNET、MQTT、HTTPS、物模型、OTA 任务接口 |
+| 云端与网络 | OneNET、MQTT、HTTP、物模型、OTA 任务接口 |
 | 网关端 | ESP32-S3、ESP-IDF、FreeRTOS、SPIFFS、UART、Wi-Fi |
 | 设备端 | STM32F407ZGT6、STM32 HAL、FreeRTOS、LVGL 8.3.11、Keil MDK、STM32CubeMX |
 | 存储 | STM32 内部 Flash、W25Q128、AT24C02 |
@@ -238,6 +256,7 @@ bootloader_OTA/
 ├─ STM32-OTA/
 │  ├─ testB3/                           STM32F407 Bootloader 正式工程
 │  └─ A区智能哨兵环境监测系统/             FreeRTOS + LVGL 正式 APP
+├─ Python_test/                         Python 串口测试、采集、故障注入和离线检查
 ├─ DOC/
 │  ├─ architecture/                     架构、引脚和协议
 │  ├─ debugging/                        故障复盘与调试证据
@@ -258,6 +277,8 @@ bootloader_OTA/
 | ESP32 UART OTA 会话 | [`ota_session.c`](ESP32S3-OTA/main/board/src/ota_session.c) |
 | ESP32 UART 接收与所有权门控 | [`uart_driver.c`](ESP32S3-OTA/main/board/src/uart_driver.c) |
 | STM32 Bootloader 状态机 | [`ota_core.c`](STM32-OTA/testB3/Drivers/bootloader_drivers/src/ota_core.c) |
+| STM32 串口软件环 | [`command.c`](STM32-OTA/testB3/Drivers/bootloader_drivers/src/command.c) |
+| Python 测试与复现命令 | [`Python_test/README.md`](Python_test/README.md) |
 | 备份、回滚与启动恢复 | [`ota_storage.c`](STM32-OTA/testB3/Drivers/bootloader_drivers/src/ota_storage.c) |
 | STM32 APP 采集与报警任务 | [`APP_Tasks.c`](STM32-OTA/A区智能哨兵环境监测系统/Core/Src/APP_Tasks.c) |
 | STM32 APP UART2 通讯任务 | [`uart2_comm.c`](STM32-OTA/A区智能哨兵环境监测系统/Core/Src/uart2_comm.c) |
@@ -271,13 +292,15 @@ bootloader_OTA/
 4. 使用 Keil 打开 `STM32-OTA/A区智能哨兵环境监测系统/MDK-ARM/LVGL_RTOS_DOME5.uvprojx`，构建正式 APP。该工程链接地址必须保持为 `0x08010000`。
 5. 先确认 APP 可独立启动和上报版本，再通过 OneNET 下发匹配版本号、大小和 MD5 的 STM32 BIN 固件。
 
-本次仓库整理没有执行编译和实机测试。复现前请结合自己的板卡、电源、外设地址和 OneNET 产品配置进行核对。
+串口专项可先按 [Python 测试说明](Python_test/README.md)复现，再接回 ESP32 执行云端 OTA。实机结果来自上述已执行测试；本次发布整理只运行离线检查，没有再次编译、烧录或连接真实串口。
 
 ## 已知边界
 
 - 当前是 W25Q128 单备份回滚，不是内部双 Bank A/B 无缝切换。
 - 已有 MD5/CRC32 完整性检查，但尚未实现数字签名、可信启动和防降级。
 - OTA 协议尚未实现会话 ID、断点续传和掉线续传。
+- ESP32 回滚后的整次自动重试仍需统一 APP/Bootloader 状态判断；跨轮任务缓存复用未完成。
+- 简单命令/信息帧拆分、其他分段间隔、重复帧粘连和容量边界尚未全部实测。
 - SHT30 当前使用阻塞式 UART 收发；故障时依靠超时退出和下一采集周期重试。
 - OneNET 温湿度属性仍为整数，0.1 精度只保留在 STM32 内部和 LVGL。
 - W25Q128 备份损坏保护逻辑已经实现，但主动破坏备份的实机故障注入尚未执行。
@@ -291,6 +314,8 @@ bootloader_OTA/
 - [双端引脚与通信协议](DOC/architecture/ESP32S3_STM32F407_引脚清单与通信协议.txt)
 - [故障复盘](DOC/debugging/README.md)
 - [实机验证记录](DOC/verification/README.md)
+- [串口组帧与 Python OTA 验证](DOC/verification/2026-10-31-uart-python-ota.md)
+- [Python 测试运行说明](Python_test/README.md)
 - [STM32 APP 开发与验证记录](DOC/development-notes/STM32_A区APP开发与实机验证记录.md)
 
 ## 许可说明
