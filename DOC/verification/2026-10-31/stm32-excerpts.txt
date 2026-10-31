@@ -1,0 +1,82 @@
+2026-10-31 STM32 关键日志摘录
+仅保留用于核对接收、CRC、恢复、版本的行；顺序保持，连续重复行省略。
+这是选择性摘录，不是完整原始串口日志。
+
+[split_8_1029] upgrade_capture_20261031_000844_661000
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977540
+CRC32校验成功!
+调试:该固件版本为v2.0.7!
+
+[split_seven_parts] upgrade_capture_20261031_001822_521992
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977540
+CRC32校验成功!
+调试:该固件版本为v2.0.7!
+
+[glue_last_two] upgrade_capture_20261031_003647_195552
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977540
+CRC32校验成功!
+调试:该固件版本为v2.0.7!
+
+[firmware_crc_recovery] fwcrc_capture_20261031_004917_351389
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977541
+收到ABORT(0x08)，准备回滚A区\r
+[回滚] 恢复成功，CRC32=0xD4977540
+调试:该固件版本为v2.0.7!
+
+[normal_after_crc] upgrade_capture_20261031_005510_862863
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977540
+CRC32校验成功!
+调试:该固件版本为v2.0.7!
+
+[active_abort] abort_capture_20261031_080032_639631
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+收到ABORT(0x08)，准备回滚A区\r
+[回滚] 恢复成功，CRC32=0xD4977540
+调试:该固件版本为v2.0.7!
+
+[normal_after_abort] upgrade_capture_20261031_080443_746180
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977540
+CRC32校验成功!
+调试:该固件版本为v2.0.7!
+
+[data_timeout] timeout_capture_20261031_080940_037636
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+[超时] 升级传输中断，准备恢复旧镜像
+[回滚] 恢复成功，CRC32=0xD4977540
+调试:该固件版本为v2.0.7!
+
+[normal_after_timeout] upgrade_capture_20261031_081032_542086
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+计算CRC32: 0xD4977540
+期望CRC32: 0xD4977540
+CRC32校验成功!
+调试:该固件版本为v2.0.7!
+
+[powerloss_mid_transfer] powerloss_capture_20261031_081758_792477
+[UART2][VERSION] ESP32已确认当前APP版本 2.0.7
+[回滚] A区备份完成，CRC32=0xD4977540
+[回滚] 检测到未完成升级，进入启动恢复
+[回滚] 恢复成功，CRC32=0xD4977540
+[回滚] 旧会话等待超时，已清除过期恢复通知
+调试:该固件版本为v2.0.7!

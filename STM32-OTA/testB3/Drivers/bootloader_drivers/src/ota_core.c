@@ -3,8 +3,8 @@
  * @brief   OTA 核心状态机实现
  * @details 归口：升级状态机（OTA_Init / OTA_ProcessFrame / OTA_WaitForHandshake / OTA_RunUpgradeProcess）、
  *          升级上下文与全局变量。
- *          ★未来回滚决策（收到 0x04/0x05 → 触发 ota_storage 回滚）也放本模块。
- *          （由原 TaskTest.c 拆分而来，函数体一字未改动）
+ *          负责从软件环提取完整帧、维护接收超时，并安排失败后的镜像回滚。
+ *          由原 TaskTest.c 拆分，存储读写仍由 ota_storage 模块执行。
  */
 
 #include "ota_core.h"
@@ -33,8 +33,8 @@ OTA_Context_t g_ota_ctx;
 /**
  * @brief OTA接收缓冲区
  *
- * 用于临时存储从串口环形缓冲区读取的数据
- * 大小设置为最大数据帧长度+4字节余量，防止溢出
+ * 保存从软件环取出的一帧；半帧和后续帧仍留在软件环里。
+ * 数组保留原来的4字节余量，实际取帧长度最多为OTA_DATA_FRAME_MAX_LEN。
  */
 static uint8_t ota_rx_buffer[OTA_DATA_FRAME_MAX_LEN + 4];
 
@@ -240,10 +240,11 @@ void OTA_Init(void)
  * @param data 数据指针
  * @param len 数据长度
  *
- * @details 根据帧长度判断帧类型:
+ * @details 调用方先提取完整帧，本函数再按命令字和长度分流:
  *   - 3字节: 简单命令帧(握手、开始传输、结束等)
- *   - 25字节(OTA_INFO_FRAME_LEN): 固件信息帧
- *   - 其他: 固件数据帧
+ *   - 0x05且25字节: 固件信息帧
+ *   - 0x06且长度不少于头尾开销: 固件数据帧，再检查数据长度、帧尾和CRC
+ *   数据载荷为12字节时整帧也是25字节，不能只凭总长度当作信息帧。
  *
  * @note 状态机处理:
  *   每种命令只在特定状态下处理，防止状态混乱
@@ -431,12 +432,9 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			}
 		}
 	}
-	/*2.固件信息帧处理
-	 * 为什么用"长度==25"来分流：三种帧的帧头0x66完全相同，命令字位置和CRC覆盖范围
-	 * 却各不相同，解析前取不到可靠命令字，所以只能用固定长度先分类——
-	 * 3字节走上面的简单命令分支，25字节走本分支，>=13字节走下面的数据帧分支，
-	 * 其余长度落到最后的"无法识别"else。这是本函数最外层分流的唯一判据。*/
-	else if (len == OTA_INFO_FRAME_LEN)
+	/*2. 固件信息帧：命令必须是0x05，总长度必须是25字节。 */
+	else if ((len == OTA_INFO_FRAME_LEN) &&
+			(data[1] == OTA_CMD_FIRMWARE_INFO))
 	{
 		/* 先原样打印收到的字节：信息帧校验失败时，靠这行日志区分
 		 * "串口丢/多字节"还是"上位机拼帧错误"（25字节全打，不截断）*/
@@ -455,7 +453,7 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 		if (g_ota_ctx.state == OTA_STATE_WAIT_INFO)
 		{
 			/* 状态闸门②：解析失败（帧头/帧尾/帧内CRC任一不符）时不改状态、
-			 * 不推进任何游标，只回NACK 0x03要求重发；
+			 * 不推进任何游标，只回NACK 0x01要求重发；
 			 * 注意阶段超时仍在走，ESP32一直发错帧最终会超时回滚。*/
 			if (OTA_ParseFirmwareInfo(data, len, &fw_info))
 			{
@@ -510,7 +508,7 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			else
 			{
 				/* 解析失败的else：帧能收够25字节，但内部结构/CRC不对。
-				 * 只回NACK 0x03，状态保持WAIT_INFO不变——ESP32会重发，
+				 * 只回NACK 0x01，状态保持WAIT_INFO不变——ESP32会重发，
 				 * 由"阶段超时"兜底，连续错帧最终会超时回滚。*/
 				U1_Printf("[错误] 固件信息帧解析失败!\r\n");
 				OTA_SendNACK(OTA_NACK_FRAME_CRC);	/*通知ESP32,当前STM32解析数据出错*/
@@ -526,12 +524,10 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			OTA_SendNACK(OTA_NACK_STATE_MISMATCH);
 		}
 	}
-	/*3.固件数据帧处理
-	 * 数据帧是变长帧(8字节头+最多1024字节数据+5字节尾)，长度无法用"=="匹配，
-	 * 所以只能把"最短可能长度(8+5=13，即data_len=0的空数据包)"作为下界兜底。
-	 * 放在最后判断：前面的3字节、25字节已经先被精确长度认领，
-	 * 这里剩下的>=13的帧就必然是数据帧；连13都不到的长度落到最后的else。*/
-	else if (len >= OTA_DATA_FRAME_HEADER_LEN + OTA_DATA_FRAME_TAIL_LEN)/* 数据帧长度检查 */
+	/*3. 固件数据帧：按0x06命令分流，具体长度和CRC由解析函数检查。 */
+	else if ((len >= OTA_DATA_FRAME_HEADER_LEN +
+					OTA_DATA_FRAME_TAIL_LEN) &&
+			(data[1] == OTA_CMD_FIRMWARE_DATA))/* 数据帧长度检查 */
 	{
 		/* 状态闸门①：数据帧只有WAIT_DATA才收。
 		 * 否则(如IDLE/WAIT_START/ROLLBACK_PENDING)走本if的else回NACK 0x02，
@@ -540,7 +536,7 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 		if (g_ota_ctx.state == OTA_STATE_WAIT_DATA)
 		{
 			/* 状态闸门②：解析失败(帧头/帧尾/帧内CRC任一不符，常见于串口丢字节)
-			 * 时不推进expected_packet，只回NACK 0x03要求ESP32重发同一包。*/
+			 * 时不推进expected_packet，只回NACK 0x01要求ESP32重发同一包。*/
 			if (OTA_ParseDataFrame(data, len, &data_frame))
 			{
 				/* 包序号三态判定——整个数据帧处理的核心分叉：
@@ -646,7 +642,7 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 			else
 			{
 				/* 解析失败的else：长度够13但帧头/帧尾/帧内CRC校验不过，
-				 * 多是串口丢字节造成；只回NACK 0x03等ESP32重发，不动任何游标。*/
+				 * 只回NACK 0x01等ESP32重发，不动任何游标。*/
 				U1_Printf("[错误] 数据帧解析失败!\r\n");
 				OTA_SendNACK(OTA_NACK_FRAME_CRC);
 
@@ -677,6 +673,112 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
 }
 
 
+/**
+ * @brief 从软件环取出一帧，没收齐就留着等下一轮。
+ * @param 无。
+ * @return 按协议长度取出的帧长；尚未收齐或本轮清理溢出数据时返回0。
+ * @note 结果放入ota_rx_buffer，取出不代表校验通过，帧尾、CRC和业务状态仍需检查。
+ *       半帧沿用握手或接收阶段的超时，不在这里另设定时器。
+ */
+static uint16_t OTA_ReadFrame(void)
+{
+    static uint32_t last_overflow = 0U;
+    uint32_t overflow;
+    uint32_t data_len;
+    uint16_t avail;
+    uint16_t frame_len;
+    uint8_t head[OTA_DATA_FRAME_HEADER_LEN];
+    uint8_t drop;
+
+    /* 软件环丢过字节，这批数据已不连续，清掉后等待主机重发。 */
+    overflow = UART_circular_buffer_GetOverflowCount();
+
+    if (overflow != last_overflow)
+    {
+        last_overflow = overflow;
+        UART_circular_buffer_Clear();
+        OTA_SendNACK(OTA_NACK_BAD_LENGTH);
+        return 0U;
+    }
+
+    avail = UART_circular_buffer_GetRxLen();
+
+    /* 只检查本次看到的数据，避免持续噪声让本函数一直不返回。 */
+    while (avail >= 2U)
+    {
+        (void)UART_circular_buffer_PeekData(head, 2U);
+
+        if (head[0] != OTA_PACKET_HEAD)
+        {
+            (void)UART_circular_buffer_ReadData(&drop, 1U);
+            avail--;
+            continue;
+        }
+
+        switch (head[1])
+        {
+            case OTA_CMD_CONFIRM:
+            case OTA_CMD_START_TRANSFER:
+            case OTA_CMD_UPGRADE_END:
+            case OTA_CMD_ABORT:
+                frame_len = OTA_SIMPLE_FRAME_LEN;
+                break;
+
+            case OTA_CMD_FIRMWARE_INFO:
+                frame_len = OTA_INFO_FRAME_LEN;
+                break;
+
+            case OTA_CMD_FIRMWARE_DATA:
+                /* 数据长度在head[4]到head[7]，先等8字节头收齐。 */
+                if (avail < OTA_DATA_FRAME_HEADER_LEN)
+                {
+                    return 0U;
+                }
+
+                (void)UART_circular_buffer_PeekData(
+                    head, OTA_DATA_FRAME_HEADER_LEN);
+
+                data_len = ((uint32_t)head[4] << 24) |
+                           ((uint32_t)head[5] << 16) |
+                           ((uint32_t)head[6] << 8) |
+                           (uint32_t)head[7];
+
+                /* 先限制长度，再算总帧长，避免越界或一直等待假长度。 */
+                if ((data_len == 0U) ||
+                    (data_len > OTA_DATA_PAYLOAD_LEN))
+                {
+                    (void)UART_circular_buffer_ReadData(&drop, 1U);
+                    avail--;
+                    OTA_SendNACK(OTA_NACK_BAD_LENGTH);
+                    continue;
+                }
+
+                frame_len = (uint16_t)(
+                    OTA_DATA_FRAME_HEADER_LEN +
+                    data_len +
+                    OTA_DATA_FRAME_TAIL_LEN);
+                break;
+
+            default:
+                /* 找到0x66但命令不认识，跳过一个字节继续找。 */
+                (void)UART_circular_buffer_ReadData(&drop, 1U);
+                avail--;
+                continue;
+        }
+
+        if (avail < frame_len)
+        {
+            return 0U;
+        }
+
+        /* 一次只取一帧；后面的帧和半帧仍留在软件环。 */
+        return UART_circular_buffer_ReadData(
+            ota_rx_buffer, frame_len);
+    }
+
+    return 0U;
+}
+
 
 
 /**
@@ -686,85 +788,78 @@ void OTA_ProcessFrame(uint8_t *data, uint16_t len)
  *
  * @details 等待流程:
  *   1. 记录开始时间
- *   2. 循环检查串口缓冲区
- *   3. 如果收到3字节数据，尝试解析
- *   4. 如果是二次握手命令(0x03)，返回成功
- *   5. 超时则返回失败
+ *   2. 每轮从软件环最多取出一帧，没收齐就继续等待
+ *   3. 有恢复通知时交给统一入口处理旧会话，ABORT确认后返回0
+ *   4. 正常等待时收到二次握手命令(0x03)返回1，由外层发送ACK
+ *   5. 超时清掉软件环残留数据并返回0
  *
  * @note 二次握手的作用:
  *   - A区收到升级通知后重启进入B区
  *   - B区启动后等待ESP32发送二次握手
- *   - 如果超时未收到，说明不需要升级，直接跳转A区
- *   - 这样可以防止意外重启后卡在Bootloader
+ *   - 超时未收到时，由外层检查A区是否可运行，再决定跳转或回滚
  */
 uint8_t OTA_WaitForHandshake(uint32_t timeout_ms)
 {
-	uint32_t start_tick = HAL_GetTick();
-	uint16_t rx_len;
-	uint8_t cmd;
+    uint32_t start_tick = HAL_GetTick();
+    uint16_t rx_len;
+    uint8_t cmd;
 
-	U1_Printf("等待ESP32二次握手... (超时: %lu ms)\r\n", timeout_ms);
+    U1_Printf("等待ESP32二次握手... (超时: %lu ms)\r\n",
+              timeout_ms);
 
-	while ((HAL_GetTick() - start_tick) < timeout_ms)
-	{
-		Bootloader_WatchdogRefresh();
-		rx_len = UART_circular_buffer_GetRxLen();
+    while ((HAL_GetTick() - start_tick) < timeout_ms)
+    {
+        Bootloader_WatchdogRefresh();
 
-		if (rx_len >= OTA_SIMPLE_FRAME_LEN)
-		{
-			/* 有恢复通知时交给统一帧入口处理，避免把INFO/DATA只读3字节后
-			 * 留下残帧；完整旧会话帧会得到NACK 0x08。 */
-			if (OTA_Storage_GetRecoveryNotice() != OTA_STORAGE_RECOVERY_NOTICE_NONE)
-			{
-				if (rx_len > sizeof(ota_rx_buffer))
-				{
-					rx_len = sizeof(ota_rx_buffer);
-				}
-				UART_circular_buffer_ReadData(ota_rx_buffer, rx_len);
-				OTA_ProcessFrame(ota_rx_buffer, rx_len);
+        rx_len = OTA_ReadFrame();
 
-				/* ABORT只有在恢复通知已可靠清除后才会收到ACK；此时无需继续
-				 * 占用剩余等待窗口，可立即进入A区有效性检查并跳转旧APP。 */
-				if (OTA_Storage_GetRecoveryNotice() == OTA_STORAGE_RECOVERY_NOTICE_NONE)
-				{
-					U1_Printf("[回滚] 旧会话ABORT已确认，结束恢复等待\r\n");
-					return 0U;
-				}
-				continue;
-			}
+        if (rx_len > 0U)
+        {
+            if (OTA_Storage_GetRecoveryNotice() !=
+                OTA_STORAGE_RECOVERY_NOTICE_NONE)
+            {
+                /* 旧会话收尾仍走原来的恢复通知处理。 */
+                OTA_ProcessFrame(ota_rx_buffer, rx_len);
 
-			UART_circular_buffer_ReadData(ota_rx_buffer, OTA_SIMPLE_FRAME_LEN);
+                if (OTA_Storage_GetRecoveryNotice() ==
+                    OTA_STORAGE_RECOVERY_NOTICE_NONE)
+                {
+                    U1_Printf(
+                        "[回滚] 旧会话ABORT已确认，结束恢复等待\r\n");
+                    return 0U;
+                }
+            }
+            else if ((rx_len == OTA_SIMPLE_FRAME_LEN) &&
+                     OTA_ParseSimpleFrame(
+                         ota_rx_buffer, rx_len, &cmd))
+            {
+                if (cmd == OTA_CMD_CONFIRM)
+                {
+                    U1_Printf("收到二次握手确认!\r\n");
+                    return 1U;
+                }
+                else if (cmd == OTA_CMD_ABORT)
+                {
+                    OTA_SendACK();
+                }
+                else
+                {
+                    OTA_SendNACK(OTA_NACK_STATE_MISMATCH);
+                }
+            }
+            else
+            {
+                /* 当前只等待握手，其他完整帧不能启动传输。 */
+                OTA_SendNACK(OTA_NACK_STATE_MISMATCH);
+            }
+        }
 
-			if (OTA_ParseSimpleFrame(ota_rx_buffer, OTA_SIMPLE_FRAME_LEN, &cmd))
-			{
-				if (OTA_HandleRecoveryNotice(cmd))
-				{
-					continue;
-				}
+        HAL_Delay(10);
+    }
 
-				if (cmd == OTA_CMD_CONFIRM)
-				{
-					U1_Printf("收到二次握手确认!\r\n");
-					return 1;
-				}
-				else if (cmd == OTA_CMD_ABORT)
-				{
-					/* IDLE本来就是初始状态，回ACK让ESP32放心 */
-					OTA_SendACK();
-				}
-				else
-				{
-					OTA_SendNACK(OTA_NACK_STATE_MISMATCH);
-				}
-
-			}
-		}
-
-		HAL_Delay(10);
-	}
-
-	U1_Printf("等待二次握手超时!\r\n");
-	return 0;
+    UART_circular_buffer_Clear();
+    U1_Printf("等待二次握手超时!\r\n");
+    return 0U;
 }
 
 
@@ -774,14 +869,15 @@ uint8_t OTA_WaitForHandshake(uint32_t timeout_ms)
  * @brief 运行升级主流程
  *
  * @details 状态机主循环:
- *   1. IDLE状态: 等待二次握手，超时则跳转APP
+ *   1. IDLE状态: 等待二次握手，超时检查A区后决定跳转或回滚
  *   2. WAIT_START状态: 等待三次握手(开始传输命令)
  *   3. WAIT_INFO状态: 等待固件信息帧
- *   4. WAIT_DATA状态: 循环接收数据帧
+ *   4. WAIT_DATA状态: 每轮最多处理一个完整数据帧，半帧留在软件环
  *   5. WAIT_END状态: 等待升级结束命令
  *   6. UPGRADE_SUCCESS: 整体CRC校验通过，跳转APP
- *      UPGRADE_FAILED: 整体CRC校验失败，停在Bootloader回到IDLE等待重试（A区已损坏不可跳转）
- *   7. JUMP_TO_APP: 直接跳转APP
+ *   7. ROLLBACK_PENDING: 等待收尾窗口后恢复旧镜像，期间仍按帧处理ABORT
+ *   8. RECOVERY_FAILED: 无法恢复可信镜像时停在Bootloader
+ *   9. JUMP_TO_APP: 跳转到已按现有策略判定可运行的APP
  *
  * @note 这是阻塞函数，在Task_While()中调用
  *       只有升级完成或跳转APP后才返回
@@ -867,57 +963,43 @@ void OTA_RunUpgradeProcess(void)
 					}
 				}
 				break;
-
 			case OTA_STATE_WAIT_START:
 			case OTA_STATE_WAIT_INFO:
 			case OTA_STATE_WAIT_DATA:
 			case OTA_STATE_WAIT_END:
-				/* 四个"等待接收"状态共用同一段处理：都是"有数据就解析、没数据就判超时"，
-				 * 真正的差异在 OTA_ProcessFrame 内部按状态做的闸门，
-				 * 以及下面超时分支里对 WAIT_START 的单独处理。*/
-				rx_len = UART_circular_buffer_GetRxLen();
-				if (rx_len > 0)
+				/* 先检查阶段超时，连续收到坏帧或错误状态帧也不能一直挂住会话。 */
+				if (OTA_IsStageTimeout())
 				{
-					/* 环形缓冲里可能堆积多帧，但一次最多只取缓冲区大小：
-					 * 多余字节留在环缓冲，下一轮(约1ms后)继续取，
-					 * 避免memcpy越界，也避免长时间占着CPU不让主循环喂狗。*/
-					if (rx_len > sizeof(ota_rx_buffer))
-					{
-						rx_len = sizeof(ota_rx_buffer);
-					}
-					UART_circular_buffer_ReadData(ota_rx_buffer, rx_len);
-					/* 一并把"收数据+解析+应答+状态迁移"全部交给ProcessFrame，
-					 * 本case不关心具体是哪条命令。*/
-					OTA_ProcessFrame(ota_rx_buffer, rx_len);
-				}
-				/* 注意是 else if：只要缓冲里还有数据就优先处理数据、暂不判超时，
-				 * 否则大包持续到达时可能被误判为"传输中断"。*/
-				else if (OTA_IsStageTimeout())
-				{
-					/* 超时分两种，区别只看A区有没有被动过：*/
+					/* 半帧一直没补齐，也按原来的阶段超时结束本轮。 */
+					UART_circular_buffer_Clear();
+
 					if (g_ota_ctx.state == OTA_STATE_WAIT_START)
 					{
-						/* WAIT_START = 只收到0x03、还没收到0x04，
-						 * 备份和擦除都没发生，A区完好，不需要回滚，
-						 * 直接清掉阶段计时退回IDLE重新等握手即可。*/
-						U1_Printf("[超时] 未收到开始传输命令，返回等待握手\r\n");
+						U1_Printf(
+							"[超时] 未收到开始传输命令，返回等待握手\r\n");
+
 						s_stage_deadline = 0U;
 						g_ota_ctx.state = OTA_STATE_IDLE;
 					}
 					else
 					{
-						/* WAIT_INFO/WAIT_DATA/WAIT_END 阶段A区已被擦除(甚至写了半截)，
-						 * 传输中断只能回滚。
-						 * 与ABORT路径的唯一差别：这里先把"超时"记入
-						 * s_pending_recovery_notice，回滚成功后写进EEPROM，
-						 * 让重启后/IDLE期仍能对旧会话帧回NACK 0x08，
-						 * 逼ESP32发ABORT收尾；而ABORT路径本来就是上位机主动放弃，
-						 * 不需要再挂这个通知。*/
-						U1_Printf("[超时] 升级传输中断，准备恢复旧镜像\r\n");
-						s_pending_recovery_notice = OTA_STORAGE_RECOVERY_NOTICE_TRANSFER_TIMEOUT;
-						/* delay=0：传输都断了，没必要再等收尾窗口，立即进回滚。*/
-						OTA_ScheduleRollback(OTA_STORAGE_REASON_TRANSFER_TIMEOUT, 0U);
+						U1_Printf(
+							"[超时] 升级传输中断，准备恢复旧镜像\r\n");
+
+						s_pending_recovery_notice =
+							OTA_STORAGE_RECOVERY_NOTICE_TRANSFER_TIMEOUT;
+
+						OTA_ScheduleRollback(
+							OTA_STORAGE_REASON_TRANSFER_TIMEOUT, 0U);
 					}
+					break;
+				}
+
+				/* 每轮只取一帧；未收齐时不解析，也不刷新阶段超时。 */
+				rx_len = OTA_ReadFrame();
+				if (rx_len > 0U)
+				{
+					OTA_ProcessFrame(ota_rx_buffer, rx_len);
 				}
 				break;
 
@@ -948,14 +1030,10 @@ void OTA_RunUpgradeProcess(void)
 				 * 继续收串口的目的不是继续升级，而是让ESP32的0x08 ABORT
 				 * 能走到ProcessFrame → 拿到ACK（ScheduleRollback的延迟就是为这个）。*/
 				/* 仍短暂处理串口，以便ESP32收到NACK后发ABORT并获得ACK。 */
-				rx_len = UART_circular_buffer_GetRxLen();
+				rx_len = OTA_ReadFrame();
+
 				if (rx_len > 0U)
 				{
-					if (rx_len > sizeof(ota_rx_buffer))
-					{
-						rx_len = sizeof(ota_rx_buffer);
-					}
-					UART_circular_buffer_ReadData(ota_rx_buffer, rx_len);
 					OTA_ProcessFrame(ota_rx_buffer, rx_len);
 				}
 
@@ -1031,13 +1109,9 @@ void OTA_RunUpgradeProcess(void)
 				break;
 		}
 
-		/* 约1ms的轮询节拍，决定两件事：
-		 *   1) 响应延迟——串口数据先进环形缓冲区，最多晚1ms被取出解析，
-		 *      期间不会丢字节（环缓冲容量足够装下多帧）；
-		 *   2) CPU占用——Bootloader不做业务，慢节拍可以少占CPU、少干扰喂狗。
-		 * 注意不要在case内部轻易加长延时（UPGRADE_SUCCESS的500ms、
-		 * RECOVERY_FAILED的2s是刻意为之），否则会拖慢整包接收、
-		 * 拉长相邻两包间隔，极端情况下触发WAIT_DATA超时误回滚。*/
+		/* 每轮留出1ms轮询间隔，实际响应时间还包括解析、日志和存储操作。
+		 * 完整帧逐轮处理，半帧留在软件环；软件环溢出由取帧函数发现并清理。
+		 * 环形缓冲不能保证任意发送速率下都不丢字节，测试仍按现有逐包ACK流程执行。 */
 		HAL_Delay(1);
 	}
 }

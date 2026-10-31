@@ -212,6 +212,60 @@ uint16_t UART_circular_buffer_ReadData(uint8_t *buf, uint16_t len)
 
 }
 
+
+/**
+ * @brief 查看软件环开头的数据，不取走。
+ * @param buf 保存查看结果的数组。
+ * @param len 最多查看多少字节，buf至少提供这些空间。
+ * @return 实际复制的字节数。
+ * @note 只能由Bootloader主循环调用，调用后读计数不变。
+ */
+uint16_t UART_circular_buffer_PeekData(uint8_t *buf, uint16_t len)
+{
+    uint32_t rd;
+    uint32_t wr;
+    uint32_t used;
+    uint16_t i;
+
+    if ((buf == NULL) || (len == 0U))
+    {
+        return 0U;
+    }
+
+    rd = uart_rd;
+    wr = uart_wr;
+    used = (uint32_t)(wr - rd);
+
+    if ((uint32_t)len > used)
+    {
+        len = (uint16_t)used;
+    }
+
+    __DMB();
+
+    for (i = 0U; i < len; i++)
+    {
+        buf[i] = uart_rx_buffer[(rd + i) & UART_RX_BUFFER_MASK];
+    }
+    /* 不推进uart_rd，查看过的数据仍然留在软件环里。 */
+    return len;
+}
+
+/**
+ * @brief 丢弃软件环里当前已经收到的数据。
+ * @param 无。
+ * @return 无。
+ * @note 只能由Bootloader主循环调用，不停止DMA，不清零写计数。
+ */
+void UART_circular_buffer_Clear(void)
+{
+    uint32_t wr = uart_wr;
+
+    __DMB();
+    /* 只推进读计数；取快照之后新写入的数据仍然保留。 */
+    uart_rd = wr;
+}
+
 /**
  * @brief 获取软件环因空间不足而拒收的字节数。
  * @param 无。

@@ -11,6 +11,13 @@ tmp/
 *.Bak
 build_*.log
 
+# Python 本机环境、缓存及实机采集原始文件
+__pycache__/
+*.py[cod]
+.venv/
+/Python_test/runs/
+/Python_test/*.log
+
 # ESP-IDF 编译输出
 ESP32S3-OTA/build/
 ESP32S3-OTA/sdkconfig.old

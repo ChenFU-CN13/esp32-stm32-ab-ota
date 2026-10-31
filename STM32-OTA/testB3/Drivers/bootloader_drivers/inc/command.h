@@ -40,6 +40,9 @@ void test(void);
  * @note 不包含UART硬件错误或DMA停机期间丢失的数据。
  */
 uint32_t UART_circular_buffer_GetOverflowCount(void);
+/* 以下接口只在Bootloader主循环使用，不能与其他读取者同时操作软件环。 */
+uint16_t UART_circular_buffer_PeekData(uint8_t *buf, uint16_t len); /* 查看数据，不推进读计数。 */
+void UART_circular_buffer_Clear(void); /* 丢弃当前已进入软件环的数据。 */
 #endif
 
 
