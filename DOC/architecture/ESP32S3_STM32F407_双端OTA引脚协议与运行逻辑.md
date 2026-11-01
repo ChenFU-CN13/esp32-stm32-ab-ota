@@ -2,6 +2,8 @@
 
 > 核对日期：2026-10-22。依据当前工作区源码及工程配置整理，包含尚未提交的改动。本文描述代码现状，不表示本次已编译、烧录或完成实机回归。旧版 TXT 保留不动。
 
+> 2026-11-01 补充：核对两端命令宏，扩充 3.2 命令表；根据当前 Bootloader 实现新增 5.4 状态机说明。本次补充未对全文重新审计，也未编译或实机验证。
+
 ## 阅读导航
 
 | 要查什么 | 对应章节 |
@@ -161,18 +163,22 @@ APP 与 Bootloader 先后运行，复用同一 AT24C02。APP 不能覆盖 Bootlo
 
 ### 3.2 命令表
 
-| cmd | 方向 | 作用 | 接收阶段 |
-|---|---|---|---|
-| `01` | ESP32 → STM32 | 升级通知；APP 回 ACK 后复位 | APP |
-| `02` | STM32 → ESP32 | OTA ACK | APP 通知应答、Bootloader 各阶段 |
-| `03` | ESP32 → STM32 | 复位后二次握手 | Bootloader 握手窗口 |
-| `04` | ESP32 → STM32 | 建立旧 APP 备份、登记升级状态、擦除 APP | Bootloader `WAIT_START` |
-| `05` | ESP32 → STM32 | 固件大小、版本、整体 CRC、信息帧 CRC | Bootloader `WAIT_INFO` |
-| `06` | ESP32 → STM32 | 固件数据包 | Bootloader `WAIT_DATA` |
-| `07` | ESP32 → STM32 | 结束；按声明长度校验内部 Flash 整包 CRC 并提交元数据 | Bootloader 数据 / 结束阶段 |
-| `08` | ESP32 → STM32 | ABORT，结束本次传输；擦除后需恢复旧 APP | Bootloader |
-| `09` | ESP32 → STM32 | 查询运行中的 APP 版本，响应为 `55 05 ... BB` | APP |
-| `0A` | STM32 → ESP32 | NACK，附 1 字节错误码 | Bootloader |
+宏名列每格第一行为 STM32 侧定义，第二行为 ESP32 侧定义，可直接复制到工程中搜索。`OTA_CMD_*` 位于 STM32 Bootloader 的 `ota_proto.h`，`SERIAL_CMD_*` 位于 ESP32 的 `ota_proto.h`；`09` 由 STM32 APP 处理，因此对应 APP 的 `UART2_COMM_VERSION_REQUEST_CMD`，Bootloader 没有定义同名 `OTA_CMD_VERSION_REQUEST`。
+
+| cmd | 代码宏名（STM32 / ESP32） | 方向 | 作用 | 接收阶段 |
+|---|---|---|---|---|
+| `01` | `OTA_CMD_UPGRADE_NOTIFY`<br>`SERIAL_CMD_UPGRADE_NOTIFY` | ESP32 → STM32 | 升级通知；APP 回 ACK 后复位 | APP |
+| `02` | `OTA_CMD_ACK`<br>`SERIAL_CMD_ACK` | STM32 → ESP32 | OTA ACK | APP 通知应答、Bootloader 各阶段 |
+| `03` | `OTA_CMD_CONFIRM`<br>`SERIAL_CMD_CONFIRM` | ESP32 → STM32 | 复位后二次握手 | Bootloader 握手窗口 |
+| `04` | `OTA_CMD_START_TRANSFER`<br>`SERIAL_CMD_START_TRANS` | ESP32 → STM32 | 建立旧 APP 备份、登记升级状态、擦除 APP | Bootloader `WAIT_START` |
+| `05` | `OTA_CMD_FIRMWARE_INFO`<br>`SERIAL_CMD_FW_INFO` | ESP32 → STM32 | 固件大小、版本、整体 CRC、信息帧 CRC | Bootloader `WAIT_INFO` |
+| `06` | `OTA_CMD_FIRMWARE_DATA`<br>`SERIAL_CMD_FW_DATA` | ESP32 → STM32 | 固件数据包 | Bootloader `WAIT_DATA` |
+| `07` | `OTA_CMD_UPGRADE_END`<br>`SERIAL_CMD_UPGRADE_END` | ESP32 → STM32 | 结束；按声明长度校验内部 Flash 整包 CRC 并提交元数据 | Bootloader 数据 / 结束阶段 |
+| `08` | `OTA_CMD_ABORT`<br>`SERIAL_CMD_ABORT` | ESP32 → STM32 | ABORT，结束本次传输；擦除后需恢复旧 APP | Bootloader |
+| `09` | `UART2_COMM_VERSION_REQUEST_CMD`<br>`SERIAL_CMD_VERSION_REQUEST` | ESP32 → STM32 | 查询运行中的 APP 版本，响应为 `55 05 ... BB` | APP |
+| `0A` | `OTA_CMD_NACK`<br>`SERIAL_CMD_NACK` | STM32 → ESP32 | NACK，附 1 字节错误码 | Bootloader |
+
+STM32 APP 的通知和 ACK 还分别定义为 `UART2_COMM_OTA_NOTIFY_CMD`（`01`）、`UART2_COMM_OTA_ACK_CMD`（`02`），位于 `Core/Inc/uart2_comm.h`。它们与表中对应 Bootloader 宏的字节值相同，但属于不同固件的定义。
 
 `66 09 BB` 不等待 `66 02 BB`。它的响应是业务版本帧，交给 ESP32 普通接收任务处理。
 
@@ -403,6 +409,89 @@ ESP32 的完成条件还要多一步：只接受传输前版本报告序号之�
 上述数值按本项目调用记录说明，不作为 OneNET 全部状态码的官方定义。成功状态上报本身仍可能失败；当前有云端重试，每项最多 3 次、间隔 2 秒，没有跨 ESP32 复位保存整轮任务的持久化补报机制。
 
 依据：S1～S4、S6、S9。
+
+### 5.4 Bootloader 状态机：`OTA_State_t`
+
+`OTA_State_t` 定义在 [ota_core.h](../../STM32-OTA/testB3/Drivers/bootloader_drivers/inc/ota_core.h)，当前状态保存在 `g_ota_ctx.state` 中。它表示 **Bootloader 现在走到哪一步**，不是 UART 命令码，也不是直接写进 EEPROM 的状态值。
+
+主要由 [ota_core.c](../../STM32-OTA/testB3/Drivers/bootloader_drivers/src/ota_core.c) 中四处代码配合完成：
+
+- `OTA_Init()`：清理本轮 RAM 上下文；每次上电首次调用时执行存储检查和掉电恢复。
+- `OTA_WaitForHandshake()`：在握手窗口内等待 `OTA_CMD_CONFIRM`（`03`），处理恢复通知期间的旧会话收尾。
+- `OTA_ProcessFrame()`：检查完整帧、当前状态、CRC、长度和包号，执行对应操作并推进状态。
+- `OTA_RunUpgradeProcess()`：按当前状态调度收帧、阶段超时、回滚和 APP 跳转；`OTA_ScheduleRollback()` 用于登记回滚原因和执行时刻。
+
+#### 5.4.1 全部状态及实际作用
+
+| 枚举名 | 含义与进入时机 | 当前动作 | 后续去向 |
+|---|---|---|---|
+| `OTA_STATE_IDLE` | 初始化后的等待态；开始阶段超时或部分恢复收尾也会回到这里 | 普通握手窗口为 5 秒；有恢复通知时为 10 秒。等待 `03`，没有有效升级请求时检查 A 区 | 收到 `03` 后 ACK → `WAIT_START`；A 区已知无效 → `ROLLBACK_PENDING`；其余按现有启动策略 → `JUMP_TO_APP` |
+| `OTA_STATE_WAIT_CONFIRM` | 等待二次握手的预留态 | `OTA_ProcessFrame()` 保留了收到 `03` 后回 ACK 并转 `WAIT_START` 的兼容分支 | 当前正常主流程没有把状态设为此值，不是必经步骤 |
+| `OTA_STATE_WAIT_START` | 二次握手成功，等待 `04` 开始命令 | 先完成旧 APP 备份，再登记 `UPGRADING`，随后擦除 A 区；全部成功才回 ACK | 成功 → `WAIT_INFO`；备份或登记失败时拒绝擦除、重新初始化；擦除失败 → `ROLLBACK_PENDING`；等 `04` 超过 15 秒 → `IDLE` |
+| `OTA_STATE_WAIT_INFO` | 备份和擦除完成，等待 `05` 信息帧 | 校验 25 字节信息帧和固件大小，把长度、整体 CRC、版本等保存到 RAM | 成功后 ACK → `WAIT_DATA`；大小非法 → 回滚；解析失败不推进状态；15 秒超时 → 回滚 |
+| `OTA_STATE_WAIT_DATA` | 已接收合法信息帧，等待 `06` 数据包 | 校验载荷 CRC 和包号，写 Flash，成功后推进地址、已收长度和期望包号，再回 ACK；上一包重复时补 ACK | 未收满保持本态；收满声明长度 → `WAIT_END`；写失败、ABORT 或 15 秒阶段超时 → 回滚 |
+| `OTA_STATE_WAIT_END` | 已接收够声明长度，等待 `07` 结束命令 | 按声明长度回读内部 Flash，核对整体 CRC，提交镜像元数据；两项都成功才回结束 ACK | 成功 → `UPGRADE_SUCCESS`；CRC / 提交失败、ABORT 或 10 秒超时 → 回滚 |
+| `OTA_STATE_UPGRADE_SUCCESS` | 新镜像整体 CRC 和元数据提交成功 | 等约 500 ms 后直接调用 `Load_A()` | 跳转新 APP；当前这条路径不先改成 `JUMP_TO_APP` |
+| `OTA_STATE_UPGRADE_FAILED` | 保留的失败兜底态 | 调度分支按存储失败原因安排立即回滚 | → `ROLLBACK_PENDING`；当前正常失败处理没有主动设置此状态 |
+| `OTA_STATE_ROLLBACK_PENDING` | 已安排回滚，等待 `s_rollback_deadline` 到期 | 等待期间仍处理串口收尾；到期调用 `OTA_Storage_Rollback()`，恢复并校验旧镜像 | 成功且无待发恢复通知 → `JUMP_TO_APP`；需要结束超时旧会话且通知保存成功 → `IDLE`；恢复或通知保存失败 → `RECOVERY_FAILED` |
+| `OTA_STATE_RECOVERY_FAILED` | 启动恢复、运行中回滚或必要通知保存失败 | 留在 Bootloader；当前主循环继续喂狗并每轮延时 2 秒，不自动跳 APP | 当前没有自动重试升级 / 回滚的状态出口，需要人工处理；不能把它当成已有完整在线救砖模式 |
+| `OTA_STATE_JUMP_TO_APP` | 无有效升级请求且按现有策略允许启动，或旧镜像恢复完成且可以结束会话 | 调用 `Load_A(FLASH_ACode_STARTADDR)` | 跳转当前 A 区 APP；它可能是原 APP 或回滚后的旧 APP |
+
+表中去向省略了共同前缀 `OTA_STATE_`。`WAIT_DATA` 的 15 秒由有效包刷新，表示接收阶段的等待窗口，不是整个固件传输的总时长；半帧和错误帧不会因此一直延长会话。
+
+#### 5.4.2 正常升级与异常回滚路径
+
+下面只画当前主流程实际使用的状态，省略两个预留 / 兜底态。节点名同样省略 `OTA_STATE_` 前缀。
+
+```mermaid
+flowchart TD
+    Init["OTA_Init：首次上电先检查存储并恢复"] --> Idle["IDLE：等待二次握手"]
+    Init -->|"启动恢复失败"| RecoveryFailed["RECOVERY_FAILED：停留 Bootloader"]
+    Idle -->|"收到 03，回 ACK"| WaitStart["WAIT_START：等待开始"]
+    WaitStart -->|"04：备份、登记、擦除成功"| WaitInfo["WAIT_INFO：等待固件信息"]
+    WaitInfo -->|"05：信息帧合法"| WaitData["WAIT_DATA：接收并写入数据"]
+    WaitData -->|"06：有效包，尚未收满"| WaitData
+    WaitData -->|"收满声明长度"| WaitEnd["WAIT_END：等待结束"]
+    WaitEnd -->|"07：整体 CRC 和提交成功"| Success["UPGRADE_SUCCESS"]
+    Success -->|"约 500 ms 后 Load_A"| App["运行 A 区 APP"]
+    WaitStart -->|"等开始超时，尚未擦除"| Idle
+    Idle -->|"无有效升级请求，按现有策略允许启动"| Jump["JUMP_TO_APP"]
+    Idle -->|"A 区已知无效"| Rollback["ROLLBACK_PENDING：等待并恢复旧镜像"]
+    WaitStart -->|"擦除失败"| Rollback
+    WaitInfo -->|"大小非法、ABORT 或超时"| Rollback
+    WaitData -->|"写失败、ABORT 或超时"| Rollback
+    WaitEnd -->|"校验或提交失败、ABORT 或超时"| Rollback
+    Rollback -->|"恢复成功，无待发恢复通知"| Jump
+    Rollback -->|"恢复成功，保存通知等待旧会话收尾"| Idle
+    Rollback -->|"恢复失败或必要通知保存失败"| RecoveryFailed
+    Jump -->|"Load_A"| App
+```
+
+图展示正常结束顺序；当前实现也允许在 `WAIT_DATA` 收到 `07` 后执行整体 CRC 和提交检查，成功时直接进入 `UPGRADE_SUCCESS`，这一边界见 5.3。图中的“允许启动”包含当前未知基线的兼容启动策略，不等于每条启动路径都已经通过完整 CRC 校验。
+
+#### 5.4.3 回滚与旧会话为什么不是一回事
+
+`ROLLBACK_PENDING` 表示已经决定恢复旧 APP，但实际拷贝由主循环在截止时刻到达后执行。擦写、CRC 或提交失败通常先给 ESP32 返回 NACK，并预留约 2 秒接收 ABORT；收到 ABORT 可以把回滚安排为立即执行。传输阶段超时等路径则可直接安排立即回滚。
+
+回滚成功还要判断 ESP32 是否知道本轮已经结束：
+
+- **已收到主动 ABORT：**旧会话已明确放弃；恢复后通常转 `JUMP_TO_APP`。
+- **传输阶段超时：**恢复后先保存恢复通知，再转 `IDLE`，给仍在发旧命令的 ESP32 留出收尾窗口。
+- **上电发现未完成升级：**`OTA_Init()` 内首次调用 `OTA_Storage_InitAndRecover()` 直接执行恢复；成功后仍在 `IDLE` 处理通知，不必先经过 RAM 中的 `ROLLBACK_PENDING`；失败则进入 `RECOVERY_FAILED`。
+
+恢复通知存在时，旧会话帧会被返回 `OTA_NACK_PREVIOUS_ROLLBACK`（`08`）；ABORT 确认清除通知后，握手等待返回，主流程检查 A 区并决定跳转。通知窗口到期未完成交互时，也会按现有策略尝试清除过期通知再决定启动。
+
+#### 5.4.4 RAM 状态与 EEPROM 状态的区别
+
+| 项目 | 保存位置 | 用途 | 复位后如何处理 |
+|---|---|---|---|
+| `OTA_State_t` / `g_ota_ctx.state` | RAM | 决定本次运行等待哪个命令、执行哪个分支 | 普通 RAM 上下文重建，不能凭它判断上次掉电前走到哪一步 |
+| `OTA_PersistentState_t` | AT24C02 `0xB5`，由存储层写入 | 记录 `IDLE`、`BACKUP_IN_PROGRESS`、`UPGRADING`、`NEED_ROLLBACK` 等持久化阶段 | 上电读取，决定能否继续启动或必须先恢复 |
+| `OTA_StorageRecoveryNotice_t` | AT24C02 `0xB8`，并有 RAM 缓存 | 告诉协议层旧镜像已恢复，但上次会话还需收尾 | 上电按格式加载，在通知窗口内拦截旧会话 |
+
+因此不能把 `OTA_STATE_WAIT_DATA` 的枚举数值直接写进 `0xB5`。**RAM 状态负责当前收发流程，EEPROM 状态负责掉电后的恢复依据，恢复通知负责双端会话收尾。** EEPROM 具体取值和地址分配见第 6 节。
+
+依据：S6、S7、S8；本小节以 `ota_core.c` 的实际赋值与 `switch` 分支为准，未沿用头文件旧流程注释中“必经 WAIT_CONFIRM”的说法。
 
 ## 6. 存储与恢复
 
